@@ -16,6 +16,10 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- التصدير إلى مجلد التنزيلات على أندرويد 9 فقط؛ من أندرويد 10 لا حاجة لصلاحية -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
 
     <application
         android:allowBackup="false"
@@ -36,6 +40,17 @@
             android:name=".CaptureService"
             android:exported="false"
             android:foregroundServiceType="camera|location" />
+
+        <!-- لمشاركة ملف الخارطة المؤقت مع المتصفح -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
         <receiver
             android:name=".BootReceiver"

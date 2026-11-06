@@ -24,6 +24,8 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -46,9 +48,13 @@ class MainActivity : Activity() {
     private lateinit var startField: EditText
     private lateinit var endField: EditText
     private lateinit var pauseButton: Button
+    private lateinit var exportButton: Button
+    private lateinit var mapView: TrackMapView
 
     private var imageIndex = -1
     private var shownCount = -1
+    private var mapCount = -1
+    private var mapTrackCount = -1
 
     private val uiHandler = Handler(Looper.getMainLooper())
     private val ticker = object : Runnable {
@@ -59,6 +65,10 @@ class MainActivity : Activity() {
     }
 
     private val timeFormat = SimpleDateFormat("HH:mm:ss dd/MM", Locale.US)
+
+    private companion object {
+        const val REQ_EXPORT = 3
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -163,6 +173,19 @@ class MainActivity : Activity() {
         nav.addView(next, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         col.addView(nav)
 
+        col.addView(label("5) الخارطة والتصدير", true))
+        col.addView(label("المسار الأزرق: GPS، والدوائر الحمراء: الصور (اضغط دائرة لعرض صورتها)"))
+        mapView = TrackMapView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(300)
+            )
+            onPhotoTap = { index -> showImage(index) }
+        }
+        col.addView(mapView)
+        col.addView(button("فتح الخارطة الحقيقية في المتصفح") { openMapInBrowser() })
+        exportButton = button("تصدير الصور والسجلات إلى التنزيلات") { doExport() }
+        col.addView(exportButton)
+
         setContentView(ScrollView(this).apply { addView(col) })
     }
 
@@ -211,6 +234,14 @@ class MainActivity : Activity() {
             shownCount = count
             showImage(count - 1)
         }
+
+        val trackCount = store.trackPointCount()
+        if (count != mapCount || trackCount != mapTrackCount) {
+            mapCount = count
+            mapTrackCount = trackCount
+            mapView.setData(store.trackPoints(), store.photoPoints())
+            mapView.setSelected(imageIndex)
+        }
     }
 
     private fun delayedRefresh() {
@@ -230,6 +261,7 @@ class MainActivity : Activity() {
         val bmp = BitmapFactory.decodeFile(files[imageIndex].path, opts)
         previewView.setImageBitmap(bmp)
         previewInfo.text = "صورة ${imageIndex + 1} من ${files.size}"
+        mapView.setSelected(imageIndex)
     }
 
     // ---------------------------------------------------------------- الإجراءات
@@ -307,7 +339,55 @@ class MainActivity : Activity() {
             toast("الآن اختر \"السماح طوال الوقت\" للموقع")
             requestPermissions(arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION), 2)
         }
+        if (requestCode == REQ_EXPORT) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                doExport()
+            } else {
+                toast("لا يمكن التصدير دون صلاحية التخزين")
+            }
+        }
         refresh()
+    }
+
+    // ---------------------------------------------------------------- التصدير والخارطة
+
+    private fun doExport() {
+        if (store.count() == 0) {
+            toast("لا توجد صور لتصديرها")
+            return
+        }
+        if (Build.VERSION.SDK_INT < 29 && !has(Manifest.permission.WRITE_EXTERNAL_STORAGE)) {
+            requestPermissions(arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE), REQ_EXPORT)
+            return
+        }
+        exportButton.isEnabled = false
+        toast("جارٍ التصدير، انتظر قليلًا")
+        Thread {
+            val result = Exporter.exportAll(applicationContext, store)
+            runOnUiThread {
+                exportButton.isEnabled = true
+                verifyView.text = result.message
+                toast(result.message)
+            }
+        }.start()
+    }
+
+    private fun openMapInBrowser() {
+        try {
+            val dir = File(cacheDir, "shared").apply { mkdirs() }
+            val file = File(dir, "map.html")
+            file.writeText(
+                MapHtml.build(store.trackPoints(), store.photoPoints(), withImages = false),
+                Charsets.UTF_8
+            )
+            val uri = FileProvider.getUriForFile(this, "$packageName.files", file)
+            val view = Intent(Intent.ACTION_VIEW)
+                .setDataAndType(uri, "text/html")
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            startActivity(Intent.createChooser(view, "افتح الخارطة بـ"))
+        } catch (e: Exception) {
+            toast("تعذر فتح الخارطة. صدّر الصور ثم افتح ملف map.html من مجلد التنزيلات")
+        }
     }
 
     private fun openBatteryExemption() {

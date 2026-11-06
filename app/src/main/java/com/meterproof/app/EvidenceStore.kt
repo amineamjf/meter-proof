@@ -110,6 +110,71 @@ class EvidenceStore(context: Context) {
         emptyList()
     }
 
+    /** ملف الصورة لمعرّف سجل معيّن. */
+    fun imageFile(id: String): File = File(imageDir, "$id.jpg")
+
+    /** نسخة من ملف السجلات الخام (للتصدير). قد لا يكون موجودًا. */
+    fun recordsFileRaw(): File = recordsFile
+
+    /** نسخة من ملف المسار الخام (للتصدير). قد لا يكون موجودًا. */
+    fun trackFileRaw(): File = trackFile
+
+    /** نقاط مسار GPS الصالحة بالترتيب الزمني. */
+    @Synchronized
+    fun trackPoints(): List<GeoPoint> {
+        if (!trackFile.exists()) return emptyList()
+        return try {
+            trackFile.readLines()
+                .filter { it.isNotBlank() }
+                .mapNotNull {
+                    try {
+                        val j = JSONObject(it)
+                        val lat = j.getString("lat").toDoubleOrNull()
+                        val lon = j.getString("lon").toDoubleOrNull()
+                        if (lat != null && lon != null) GeoPoint(lat, lon) else null
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    /**
+     * مواقع الصور التي لها إحداثيات. الحقل index هو ترتيب الصورة في imageFiles()
+     * (أي نفس الرقم الذي تعرضه المعاينة)، وصور بلا إحداثيات تُحسب في الترقيم ولا تظهر على الخارطة.
+     */
+    @Synchronized
+    fun photoPoints(): List<PhotoPoint> {
+        return try {
+            val out = ArrayList<PhotoPoint>()
+            var index = 0
+            for (r in readRecords()) {
+                val id = r.getString("id")
+                if (!File(imageDir, "$id.jpg").exists()) continue
+                val lat = r.optString("lat").toDoubleOrNull()
+                val lon = r.optString("lon").toDoubleOrNull()
+                if (lat != null && lon != null) {
+                    out.add(
+                        PhotoPoint(
+                            index = index,
+                            id = id,
+                            timeMillis = r.optString("t").toLongOrNull() ?: 0L,
+                            lat = lat,
+                            lon = lon,
+                            accuracy = r.optString("acc").toFloatOrNull()
+                        )
+                    )
+                }
+                index++
+            }
+            out
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
     private fun lastHash(): String {
         val last = try { readRecords().lastOrNull() } catch (e: Exception) { null }
         return last?.getString("hash") ?: GENESIS

@@ -60,6 +60,16 @@ class Settings(context: Context) {
         get() = sp.getBoolean("photoOnStop", false)
         set(v) = sp.edit().putBoolean("photoOnStop", v).apply()
 
+    /** الحي المختار في شاشة الجولة (فارغ = كل الأحياء) */
+    var roundQuartier: String
+        get() = sp.getString("roundQuartier", "") ?: ""
+        set(v) = sp.edit().putString("roundQuartier", v).apply()
+
+    /** إظهار العدادات المنجزة في قائمة الجولة */
+    var roundShowDone: Boolean
+        get() = sp.getBoolean("roundShowDone", false)
+        set(v) = sp.edit().putBoolean("roundShowDone", v).apply()
+
     /** حالة التتبع الحالية للعرض: moving / stopped / idle (خارج الدوام أو إيقاف مؤقت) */
     var motionState: String
         get() = sp.getString("motionState", "idle") ?: "idle"

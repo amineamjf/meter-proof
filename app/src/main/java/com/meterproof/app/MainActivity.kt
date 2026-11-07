@@ -225,6 +225,12 @@ class MainActivity : Activity() {
         col.addView(summaryView)
         col.addView(button("تصدير ملخص اليوم (PDF) إلى التنزيلات") { exportSummary() })
 
+        col.addView(label("7) جولة العدادات", true))
+        col.addView(label("استيراد ملف الجولة، قائمة العدادات الأقرب إليك، وتصوير عداد يربط الصورة والموقع به"))
+        col.addView(button("فتح جولة العدادات") {
+            startActivity(Intent(this, RoundActivity::class.java))
+        })
+
         setContentView(ScrollView(this).apply { addView(col) })
     }
 

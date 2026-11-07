@@ -36,6 +36,11 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".RoundActivity"
+            android:exported="false"
+            android:label="جولة العدادات" />
+
         <service
             android:name=".CaptureService"
             android:exported="false"

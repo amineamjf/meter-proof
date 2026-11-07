@@ -46,6 +46,14 @@ class CaptureService : LifecycleService() {
         const val ACTION_STOP = "com.meterproof.app.STOP"
         const val ACTION_ALARM = "com.meterproof.app.ALARM"
         const val ACTION_NOW = "com.meterproof.app.NOW"
+        const val ACTION_METER = "com.meterproof.app.METER"
+
+        private const val EXTRA_METER_ID = "meter_id"
+        private const val EXTRA_LAT = "lat"
+        private const val EXTRA_LON = "lon"
+        private const val EXTRA_ACC = "acc"
+        private const val EXTRA_ELAPSED = "elapsed"
+        private const val EXTRA_MOCK = "mock"
 
         private const val CHANNEL_ID = "meterproof_session"
         private const val NOTIF_ID = 1001
@@ -65,6 +73,27 @@ class CaptureService : LifecycleService() {
                 ctx, Intent(ctx, CaptureService::class.java).setAction(ACTION_NOW)
             )
         }
+
+        /**
+         * تصوير عداد من الجولة: الموقع يأتي من شاشة الجولة (فيه آخر نقطة GPS حية)،
+         * فيعمل حتى خارج الجلسة. الصورة تُربط بالعداد داخل السجل المبصوم.
+         */
+        fun captureForMeter(
+            ctx: Context, meterId: Long, lat: Double, lon: Double, acc: Float,
+            elapsedRealtimeNanos: Long, mock: Boolean
+        ) {
+            ContextCompat.startForegroundService(
+                ctx,
+                Intent(ctx, CaptureService::class.java)
+                    .setAction(ACTION_METER)
+                    .putExtra(EXTRA_METER_ID, meterId)
+                    .putExtra(EXTRA_LAT, lat)
+                    .putExtra(EXTRA_LON, lon)
+                    .putExtra(EXTRA_ACC, acc)
+                    .putExtra(EXTRA_ELAPSED, elapsedRealtimeNanos)
+                    .putExtra(EXTRA_MOCK, mock)
+            )
+        }
     }
 
     private lateinit var settings: Settings
@@ -74,6 +103,13 @@ class CaptureService : LifecycleService() {
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private var capturing = false
+
+    // ---- تصوير عداد من الجولة (تُضبط عند بدء الالتقاط وتُمسح عند نهايته)
+    @Volatile private var captureMeterId = -1L
+    @Volatile private var captureLocation: Location? = null
+    @Volatile private var captureExtraFlags: Set<String> = emptySet()
+    private val roundDb by lazy { RoundDb(this) }
+
     private var cameraProvider: ProcessCameraProvider? = null
     private var wakeLock: PowerManager.WakeLock? = null
 
@@ -210,6 +246,16 @@ class CaptureService : LifecycleService() {
             ACTION_NOW -> {
                 if (!enterForeground()) return START_NOT_STICKY
                 capture("test")
+            }
+            ACTION_METER -> {
+                if (!enterForeground()) return START_NOT_STICKY
+                if (!capturing && intent != null) {
+                    captureMeterId = intent.getLongExtra(EXTRA_METER_ID, -1L)
+                    captureLocation = locationFromExtras(intent)
+                    captureExtraFlags =
+                        if (intent.getBooleanExtra(EXTRA_MOCK, false)) setOf("MOCK_LOCATION") else emptySet()
+                    capture("meter")
+                }
             }
             else -> {
                 if (!enterForeground()) return START_NOT_STICKY
@@ -372,8 +418,27 @@ class CaptureService : LifecycleService() {
                 }
                 if (jpeg != null) {
                     try {
-                        val loc = lastLocation
-                        store.addRecord(jpeg, mode, loc, currentFlags(loc))
+                        val meterId = captureMeterId
+                        val loc = captureLocation ?: lastLocation
+                        val meter = if (meterId > 0) roundDb.get(meterId) else null
+
+                        val flagSet = java.util.TreeSet<String>()
+                        currentFlags(loc).split(',').filter { it.isNotEmpty() }.forEach { flagSet.add(it) }
+                        flagSet.addAll(captureExtraFlags)
+                        if (meter != null && loc != null && meter.lat != null && meter.lon != null) {
+                            val d = Geo.distanceM(loc.latitude, loc.longitude, meter.lat, meter.lon)
+                            if (d > RoundLogic.nearLimitM(loc.accuracy)) flagSet.add("FAR_FROM_METER")
+                        }
+                        val flags = flagSet.joinToString(",")
+
+                        val recordId = store.addRecord(jpeg, mode, loc, flags, meter?.meterNo ?: "")
+                        if (meter != null) {
+                            roundDb.markDone(meter.id, recordId, flags, System.currentTimeMillis())
+                            // عداد بلا إحداثية: نتعلّمها من أول صورة دقيقة التُقطت عنده
+                            if (!meter.hasGps && loc != null && loc.accuracy <= 30f) {
+                                roundDb.learn(meter.id, loc.latitude, loc.longitude)
+                            }
+                        }
                     } catch (e: Exception) {
                         settings.lastError = "فشل الحفظ: ${e.javaClass.simpleName}"
                     }
@@ -427,8 +492,22 @@ class CaptureService : LifecycleService() {
         }
     }
 
+    private fun locationFromExtras(i: Intent): Location? {
+        if (!i.hasExtra(EXTRA_LAT) || !i.hasExtra(EXTRA_LON)) return null
+        val l = Location("gps")
+        l.latitude = i.getDoubleExtra(EXTRA_LAT, 0.0)
+        l.longitude = i.getDoubleExtra(EXTRA_LON, 0.0)
+        l.accuracy = i.getFloatExtra(EXTRA_ACC, 0f)
+        l.time = System.currentTimeMillis()
+        l.elapsedRealtimeNanos = i.getLongExtra(EXTRA_ELAPSED, SystemClock.elapsedRealtimeNanos())
+        return l
+    }
+
     private fun finishCapture(mode: String) {
         capturing = false
+        captureMeterId = -1L
+        captureLocation = null
+        captureExtraFlags = emptySet()
         releaseWakeLock()
         if (mode == "auto") {
             if (settings.active) scheduleNext()

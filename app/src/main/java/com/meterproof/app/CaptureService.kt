@@ -19,6 +19,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
@@ -77,23 +78,102 @@ class CaptureService : LifecycleService() {
     private var wakeLock: PowerManager.WakeLock? = null
 
     private var lastLocation: Location? = null
-    private var lastTrackAt = 0L
     private var locationListening = false
+
+    // ---- التتبع الذكي ومؤشرات التلاعب
+    private var gpsFast = true
+    private var tracking = false
+    private lateinit var tracker: MotionTracker
+    private var motionSensor: MotionSensor? = null
+    private val clockWatch = ClockWatch()
+    private var clockJumped = false
+    private var lastFixMock = false
+    private val tamperLoggedAt = HashMap<String, Long>()
+
+    /** يستقبل قرارات آلة الحالات ويكتبها في المخزن (الكتابة على خيط منفصل). */
+    private val trackerSink = object : MotionTracker.Sink {
+        override fun onTrackPoint(fix: MotionTracker.Fix, reason: String) {
+            val flags = if (lastFixMock) "MOCK_LOCATION" else ""
+            executor.execute {
+                try {
+                    store.addTrackFix(fix.t, fix.lat, fix.lon, fix.acc, reason, flags)
+                } catch (e: Exception) {
+                    // تجاهل: نقطة مسار واحدة لا تستحق إيقاف الخدمة
+                }
+            }
+        }
+
+        override fun onStopStart(fix: MotionTracker.Fix, sinceMs: Long) {
+            settings.motionState = "stopped"
+            settings.stopSince = sinceMs
+            executor.execute {
+                try {
+                    store.addEvent(
+                        "STOP_START", System.currentTimeMillis(), fix.lat, fix.lon, fix.acc,
+                        "since=$sinceMs"
+                    )
+                } catch (e: Exception) {
+                    // تجاهل
+                }
+            }
+            if (settings.photoOnStop && settings.active && !settings.paused && inWorkHours()) {
+                mainHandler.post { capture("stop") }
+            }
+        }
+
+        override fun onStopEnd(startMs: Long, endMs: Long, fix: MotionTracker.Fix) {
+            settings.motionState = "moving"
+            executor.execute {
+                try {
+                    store.addEvent(
+                        "STOP_END", endMs, fix.lat, fix.lon, fix.acc,
+                        "start=$startMs;dur=${(endMs - startMs) / 1000}"
+                    )
+                } catch (e: Exception) {
+                    // تجاهل
+                }
+            }
+        }
+
+        override fun onGpsFast(fast: Boolean) {
+            setGpsFast(fast)
+        }
+    }
+
+    private fun newTracker(): MotionTracker = MotionTracker(
+        MotionTracker.Config(stopAfterMs = settings.stopAfterSeconds.coerceIn(10, 600) * 1000L),
+        trackerSink
+    )
 
     private val locationListener = object : LocationListener {
         override fun onLocationChanged(location: Location) {
             lastLocation = location
-            val now = System.currentTimeMillis()
-            if (now - lastTrackAt >= 30_000L) {
-                lastTrackAt = now
-                executor.execute {
-                    try {
-                        store.addTrackPoint(location)
-                    } catch (e: Exception) {
-                        // تجاهل: نقطة مسار واحدة لا تستحق إيقاف الخدمة
-                    }
+            lastFixMock = isMock(location)
+            watchTamper(location)
+
+            // التسجيل محصور في ساعات الدوام وخارج الإيقاف المؤقت
+            if (settings.paused || !inWorkHours()) {
+                if (tracking) {
+                    tracking = false
+                    tracker.finish(System.currentTimeMillis())
+                    settings.motionState = "idle"
+                    stopMotionSensor()
+                    setGpsFast(false)
                 }
+                return
             }
+            if (!tracking) {
+                tracking = true
+                settings.motionState = "moving"
+                setGpsFast(true)
+                startMotionSensor()
+            }
+            tracker.onFix(
+                MotionTracker.Fix(
+                    System.currentTimeMillis(), location.latitude, location.longitude,
+                    location.accuracy, if (location.hasSpeed()) location.speed else null
+                )
+            )
         }
 
         @Deprecated("Deprecated in Java")
@@ -108,6 +188,7 @@ class CaptureService : LifecycleService() {
         super.onCreate()
         settings = Settings(this)
         store = EvidenceStore(this)
+        tracker = newTracker()
         createChannel()
     }
 
@@ -134,6 +215,14 @@ class CaptureService : LifecycleService() {
                 if (!enterForeground()) return START_NOT_STICKY
                 settings.active = true
                 settings.lastError = ""
+                tracker = newTracker()
+                tracking = false
+                clockJumped = false
+                tamperLoggedAt.clear()
+                settings.motionState = "idle"
+                gpsFast = !settings.paused && inWorkHours()
+                logEvent("SESSION_START", "")
+                if (autoTimeOff()) logTamper("AUTO_TIME_OFF")
                 startLocationUpdates()
                 scheduleNext()
             }
@@ -143,6 +232,7 @@ class CaptureService : LifecycleService() {
 
     override fun onDestroy() {
         stopLocationUpdates()
+        stopMotionSensor()
         releaseWakeLock()
         executor.shutdown()
         super.onDestroy()
@@ -233,6 +323,11 @@ class CaptureService : LifecycleService() {
 
     private fun capture(mode: String) {
         if (capturing) return
+        if (clockWatch.check(System.currentTimeMillis(), SystemClock.elapsedRealtime())) {
+            clockJumped = true
+            logTamper("CLOCK_JUMP")
+        }
+        if (autoTimeOff()) logTamper("AUTO_TIME_OFF")
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
             != PackageManager.PERMISSION_GRANTED
         ) {
@@ -277,7 +372,8 @@ class CaptureService : LifecycleService() {
                 }
                 if (jpeg != null) {
                     try {
-                        store.addRecord(jpeg, mode, lastLocation)
+                        val loc = lastLocation
+                        store.addRecord(jpeg, mode, loc, currentFlags(loc))
                     } catch (e: Exception) {
                         settings.lastError = "فشل الحفظ: ${e.javaClass.simpleName}"
                     }
@@ -353,10 +449,11 @@ class CaptureService : LifecycleService() {
             return
         }
         val lm = getSystemService(LocationManager::class.java)
+        val interval = if (gpsFast) 5_000L else 30_000L
         try {
             for (p in listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)) {
                 if (!lm.isProviderEnabled(p)) continue
-                lm.requestLocationUpdates(p, 30_000L, 0f, locationListener, Looper.getMainLooper())
+                lm.requestLocationUpdates(p, interval, 0f, locationListener, Looper.getMainLooper())
                 val known = lm.getLastKnownLocation(p)
                 val current = lastLocation
                 if (known != null && (current == null || known.time > current.time)) {
@@ -379,9 +476,96 @@ class CaptureService : LifecycleService() {
         locationListening = false
     }
 
+    /**
+     * وتيرة GPS: سريعة (كل 5 ثوانٍ) أثناء الحركة، وبطيئة (كل 30 ثانية) أثناء التوقف الطويل
+     * أو خارج الدوام. التبديل يُؤجَّل إلى الخيط الرئيسي كي لا يحدث داخل استدعاء الموقع نفسه.
+     */
+    private fun setGpsFast(fast: Boolean) {
+        mainHandler.post {
+            if (gpsFast == fast) return@post
+            gpsFast = fast
+            if (locationListening) {
+                stopLocationUpdates()
+                startLocationUpdates()
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- حساس الحركة
+
+    private fun startMotionSensor() {
+        if (motionSensor == null) {
+            motionSensor = MotionSensor(this, mainHandler) { t, moving ->
+                if (tracking) tracker.onMotion(t, moving)
+            }
+        }
+        motionSensor?.start()
+    }
+
+    private fun stopMotionSensor() {
+        motionSensor?.stop()
+    }
+
+    // ---------------------------------------------------------------- مؤشرات التلاعب والأحداث
+
+    private fun logEvent(type: String, detail: String) {
+        val loc = lastLocation
+        val now = System.currentTimeMillis()
+        executor.execute {
+            try {
+                store.addEvent(type, now, loc?.latitude, loc?.longitude, loc?.accuracy, detail)
+            } catch (e: Exception) {
+                // تجاهل
+            }
+        }
+    }
+
+    /** يسجل حدث تلاعب مرة كل نصف ساعة لكل نوع كي لا يمتلئ السجل. */
+    private fun logTamper(kind: String) {
+        val now = SystemClock.elapsedRealtime()
+        val last = tamperLoggedAt[kind]
+        if (last != null && now - last < 30 * 60_000L) return
+        tamperLoggedAt[kind] = now
+        logEvent("TAMPER", kind)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun isMock(loc: Location): Boolean =
+        if (Build.VERSION.SDK_INT >= 31) loc.isMock else loc.isFromMockProvider
+
+    private fun autoTimeOff(): Boolean = try {
+        android.provider.Settings.Global.getInt(
+            contentResolver, android.provider.Settings.Global.AUTO_TIME, 1
+        ) == 0
+    } catch (e: Exception) {
+        false
+    }
+
+    private fun watchTamper(loc: Location) {
+        if (clockWatch.check(System.currentTimeMillis(), SystemClock.elapsedRealtime())) {
+            clockJumped = true
+            logTamper("CLOCK_JUMP")
+        }
+        if (isMock(loc)) logTamper("MOCK_LOCATION")
+    }
+
+    /** علامات تُحفظ مع الصورة داخل السجل المبصوم. فارغة إن لم يُرصد شيء. */
+    private fun currentFlags(loc: Location?): String {
+        val f = java.util.TreeSet<String>()
+        if (clockJumped) f.add("CLOCK_JUMP")
+        if (autoTimeOff()) f.add("AUTO_TIME_OFF")
+        if (loc != null) {
+            if (isMock(loc)) f.add("MOCK_LOCATION")
+            val ageMs = (SystemClock.elapsedRealtimeNanos() - loc.elapsedRealtimeNanos) / 1_000_000L
+            if (ageMs > 5 * 60_000L) f.add("STALE_LOCATION")
+        }
+        return f.joinToString(",")
+    }
+
     // ---------------------------------------------------------------- الإيقاف
 
     private fun stopSession() {
+        val wasActive = settings.active
         settings.active = false
         settings.nextCaptureAt = 0L
         try {
@@ -389,6 +573,13 @@ class CaptureService : LifecycleService() {
         } catch (e: Exception) {
             // لا شيء
         }
+        if (tracking) {
+            tracker.finish(System.currentTimeMillis())
+            tracking = false
+        }
+        settings.motionState = "idle"
+        stopMotionSensor()
+        if (wasActive) logEvent("SESSION_STOP", "")
         stopLocationUpdates()
         releaseCamera()
         stopForegroundAndSelf()

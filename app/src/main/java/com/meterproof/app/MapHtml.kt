@@ -12,7 +12,12 @@ import org.json.JSONObject
  */
 object MapHtml {
 
-    fun build(track: List<GeoPoint>, photos: List<PhotoPoint>, withImages: Boolean): String {
+    fun build(
+        track: List<GeoPoint>,
+        photos: List<PhotoPoint>,
+        stops: List<Stop>,
+        withImages: Boolean
+    ): String {
         val trackJson = JSONArray()
         for (p in track) trackJson.put(JSONArray().put(p.lat).put(p.lon))
 
@@ -28,9 +33,18 @@ object MapHtml {
             photosJson.put(o)
         }
 
+        val stopsJson = JSONArray()
+        for (s in stops) {
+            if (s.lat == 0.0 && s.lon == 0.0) continue
+            stopsJson.put(
+                JSONArray().put(s.lat).put(s.lon).put(s.startMs).put(s.endMs ?: 0L)
+            )
+        }
+
         return TEMPLATE
             .replace("__TRACK__", trackJson.toString())
             .replace("__PHOTOS__", photosJson.toString())
+            .replace("__STOPS__", stopsJson.toString())
             .replace("__WITH_IMAGES__", if (withImages) "true" else "false")
     }
 
@@ -49,11 +63,12 @@ object MapHtml {
 </head>
 <body>
 <div id="map"></div>
-<div class="note">الخط الأزرق: مسار GPS، والدوائر الحمراء: أماكن الصور (اضغط عليها)</div>
+<div class="note">الخط الأزرق: مسار GPS، الأحمر: الصور، البرتقالي: توقفات (اضغط عليها)</div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 var track = __TRACK__;
 var photos = __PHOTOS__;
+var stops = __STOPS__;
 var withImages = __WITH_IMAGES__;
 
 var map = L.map('map');
@@ -67,6 +82,20 @@ if (track.length) {
   L.polyline(track, { color: '#1565c0', weight: 4 }).addTo(map);
   bounds = bounds.concat(track);
 }
+stops.forEach(function (s) {
+  var m = L.circleMarker([s[0], s[1]], {
+    radius: 9, color: '#e65100', fillColor: '#fb8c00', fillOpacity: 0.9
+  }).addTo(map);
+  var html = '<b>توقف</b><br>من ' + new Date(s[2]).toLocaleTimeString('ar-MA');
+  if (s[3]) {
+    html += '<br>إلى ' + new Date(s[3]).toLocaleTimeString('ar-MA');
+    html += '<br>المدة: ' + Math.max(1, Math.round((s[3] - s[2]) / 60000)) + ' دقيقة';
+  } else {
+    html += '<br>ما زال جاريًا';
+  }
+  m.bindPopup(html);
+  bounds.push([s[0], s[1]]);
+});
 photos.forEach(function (p) {
   var m = L.circleMarker([p.lat, p.lon], {
     radius: 10, color: '#b71c1c', fillColor: '#ef5350', fillOpacity: 0.9

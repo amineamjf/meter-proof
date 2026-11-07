@@ -50,6 +50,26 @@ class Settings(context: Context) {
         get() = sp.getInt("discarded", 0)
         set(v) = sp.edit().putInt("discarded", v).apply()
 
+    /** بعد كم ثانية من الثبات في المكان يُعدّ ذلك توقفًا طويلًا */
+    var stopAfterSeconds: Int
+        get() = sp.getInt("stopAfter", 30)
+        set(v) = sp.edit().putInt("stopAfter", v).apply()
+
+    /** التقاط صورة تلقائيًا عند بداية كل توقف طويل (مغلق افتراضيًا) */
+    var photoOnStop: Boolean
+        get() = sp.getBoolean("photoOnStop", false)
+        set(v) = sp.edit().putBoolean("photoOnStop", v).apply()
+
+    /** حالة التتبع الحالية للعرض: moving / stopped / idle (خارج الدوام أو إيقاف مؤقت) */
+    var motionState: String
+        get() = sp.getString("motionState", "idle") ?: "idle"
+        set(v) = sp.edit().putString("motionState", v).apply()
+
+    /** منذ متى التوقف الحالي (للعرض) */
+    var stopSince: Long
+        get() = sp.getLong("stopSince", 0L)
+        set(v) = sp.edit().putLong("stopSince", v).apply()
+
     /** آخر خطأ في التصوير (للتشخيص أثناء التجربة) */
     var lastError: String
         get() = sp.getString("lastError", "") ?: ""

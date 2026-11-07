@@ -178,6 +178,31 @@ class EvidenceStore(context: Context) {
         }
     }
 
+    /** وصف نصي لكل صورة (المفتاح هو معرّف السجل): الوقت والموقع والعلامات. */
+    @Synchronized
+    fun describeRecords(): Map<String, String> = try {
+        val fmt = java.text.SimpleDateFormat("HH:mm:ss dd/MM/yyyy", java.util.Locale.US)
+        readRecords().associate { r ->
+            val t = r.optString("t").toLongOrNull()
+            val sb = StringBuilder()
+            sb.append(if (t != null) fmt.format(java.util.Date(t)) else "؟")
+            val lat = r.optString("lat")
+            val lon = r.optString("lon")
+            if (lat.isNotEmpty() && lon.isNotEmpty()) {
+                sb.append("\n").append(lat).append(", ").append(lon)
+                val acc = r.optString("acc").toFloatOrNull()
+                if (acc != null) sb.append("  (±").append(acc.toInt()).append(" م)")
+            } else {
+                sb.append("\nبلا موقع")
+            }
+            val flags = r.optString("flags")
+            if (flags.isNotEmpty()) sb.append("\n⚠ ").append(flags)
+            r.getString("id") to sb.toString()
+        }
+    } catch (e: Exception) {
+        emptyMap()
+    }
+
     /** أوقات الصور المحفوظة (للملخص). */
     @Synchronized
     fun photoTimes(): List<Long> = try {

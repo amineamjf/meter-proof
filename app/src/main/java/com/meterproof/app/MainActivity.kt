@@ -198,6 +198,12 @@ class MainActivity : Activity() {
         exportButton = button("تصدير الصور والسجلات إلى التنزيلات") { doExport() }
         col.addView(exportButton)
 
+        // أداة تجربة موجودة في نسخة debug فقط؛ إن غابت الشاشة (نسخة release) لا يظهر الزر
+        val galleryIntent = Intent().setClassName(packageName, "com.meterproof.app.GalleryActivity")
+        if (galleryIntent.resolveActivity(packageManager) != null) {
+            col.addView(button("🧪 معرض الصور ومشاركتها (للتجربة فقط)") { startActivity(galleryIntent) })
+        }
+
         col.addView(label("6) ملخص اليوم", true))
         val dayNav = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         dayNav.addView(

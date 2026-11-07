@@ -37,10 +37,12 @@ class EvidenceStore(context: Context) {
          */
         private fun recordHash(
             id: String, t: String, lat: String, lon: String, acc: String,
-            mode: String, sha: String, prev: String, flags: String = ""
+            mode: String, sha: String, prev: String, flags: String = "", meter: String = ""
         ): String {
             val parts = mutableListOf(id, t, lat, lon, acc, mode, sha, prev)
-            if (flags.isNotEmpty()) parts.add(flags)
+            // الحقول الاختيارية تدخل في البصمة فقط إن وُجدت، فتبقى السجلات القديمة صالحة
+            if (flags.isNotEmpty() || meter.isNotEmpty()) parts.add(flags)
+            if (meter.isNotEmpty()) parts.add("m=$meter")
             return sha256(parts.joinToString("|").toByteArray(Charsets.UTF_8))
         }
 
@@ -54,7 +56,9 @@ class EvidenceStore(context: Context) {
     }
 
     @Synchronized
-    fun addRecord(jpeg: ByteArray, mode: String, loc: Location?, flags: String = ""): String {
+    fun addRecord(
+        jpeg: ByteArray, mode: String, loc: Location?, flags: String = "", meter: String = ""
+    ): String {
         val id = UUID.randomUUID().toString()
         val t = System.currentTimeMillis().toString()
         val lat = loc?.latitude?.toString() ?: ""
@@ -62,7 +66,7 @@ class EvidenceStore(context: Context) {
         val acc = loc?.accuracy?.toString() ?: ""
         val sha = sha256(jpeg)
         val prev = lastHash()
-        val hash = recordHash(id, t, lat, lon, acc, mode, sha, prev, flags)
+        val hash = recordHash(id, t, lat, lon, acc, mode, sha, prev, flags, meter)
 
         // الصورة أولًا ثم السجل، فلا يوجد سجل بلا صورة
         File(imageDir, "$id.jpg").writeBytes(jpeg)
@@ -78,6 +82,7 @@ class EvidenceStore(context: Context) {
             .put("prev", prev)
             .put("hash", hash)
         if (flags.isNotEmpty()) json.put("flags", flags)
+        if (meter.isNotEmpty()) json.put("meter", meter)
         recordsFile.appendText(json.toString() + "\n")
         return id
     }
@@ -195,6 +200,8 @@ class EvidenceStore(context: Context) {
             } else {
                 sb.append("\nبلا موقع")
             }
+            val meter = r.optString("meter")
+            if (meter.isNotEmpty()) sb.append("\nالعداد: ").append(meter)
             val flags = r.optString("flags")
             if (flags.isNotEmpty()) sb.append("\n⚠ ").append(flags)
             r.getString("id") to sb.toString()
@@ -340,7 +347,7 @@ class EvidenceStore(context: Context) {
                 val expected = recordHash(
                     id, r.getString("t"), r.getString("lat"), r.getString("lon"),
                     r.getString("acc"), r.getString("mode"), r.getString("sha"), r.getString("prev"),
-                    r.optString("flags", "")
+                    r.optString("flags", ""), r.optString("meter", "")
                 )
                 if (expected != r.getString("hash")) return "❌ بيانات السجل $n مُعدَّلة"
                 val img = File(imageDir, "$id.jpg")

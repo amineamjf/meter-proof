@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- نسخة debug فقط: تسمح بمشاركة الصور الأصلية، وتحل محل الملف الأقل صلاحيات في نسخة release -->
+<paths>
+    <cache-path name="shared" path="shared/" />
+    <files-path name="evidence_images" path="evidence/images/" />
+</paths>

@@ -50,11 +50,17 @@ class MainActivity : Activity() {
     private lateinit var pauseButton: Button
     private lateinit var exportButton: Button
     private lateinit var mapView: TrackMapView
+    private lateinit var stopField: EditText
+    private lateinit var photoOnStopButton: Button
+    private lateinit var dayLabel: TextView
+    private lateinit var summaryView: TextView
 
     private var imageIndex = -1
     private var shownCount = -1
     private var mapCount = -1
     private var mapTrackCount = -1
+    private var mapEventCount = -1
+    private var dayOffset = 0
 
     private val uiHandler = Handler(Looper.getMainLooper())
     private val ticker = object : Runnable {
@@ -68,6 +74,7 @@ class MainActivity : Activity() {
 
     private companion object {
         const val REQ_EXPORT = 3
+        const val REQ_SUMMARY = 4
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -140,6 +147,11 @@ class MainActivity : Activity() {
         startField = numberField(settings.startHour).also { col.addView(it) }
         col.addView(label("نهاية الدوام (ساعة 1 إلى 24)"))
         endField = numberField(settings.endHour).also { col.addView(it) }
+        col.addView(label("مدة الثبات التي تُعدّ توقفًا طويلًا (ثوانٍ، من 10 إلى 600؛ تسري من الجلسة التالية)"))
+        stopField = numberField(settings.stopAfterSeconds).also { col.addView(it) }
+        photoOnStopButton = button("") { togglePhotoOnStop() }
+        col.addView(photoOnStopButton)
+        updatePhotoOnStopText()
         col.addView(button("حفظ الإعدادات") { saveSettings(true) })
 
         col.addView(label("3) الجلسة", true))
@@ -174,7 +186,7 @@ class MainActivity : Activity() {
         col.addView(nav)
 
         col.addView(label("5) الخارطة والتصدير", true))
-        col.addView(label("المسار الأزرق: GPS، والدوائر الحمراء: الصور (اضغط دائرة لعرض صورتها)"))
+        col.addView(label("المسار الأزرق: GPS، الدوائر الحمراء: الصور (اضغط دائرة لعرض صورتها)، المربعات البرتقالية: توقفات"))
         mapView = TrackMapView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(300)
@@ -185,6 +197,27 @@ class MainActivity : Activity() {
         col.addView(button("فتح الخارطة الحقيقية في المتصفح") { openMapInBrowser() })
         exportButton = button("تصدير الصور والسجلات إلى التنزيلات") { doExport() }
         col.addView(exportButton)
+
+        col.addView(label("6) ملخص اليوم", true))
+        val dayNav = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        dayNav.addView(
+            button("اليوم السابق") { dayOffset--; renderSummary() },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        )
+        dayNav.addView(
+            button("اليوم التالي") { if (dayOffset < 0) { dayOffset++; renderSummary() } },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        )
+        col.addView(dayNav)
+        dayLabel = TextView(this).apply {
+            textSize = 15f
+            setTypeface(typeface, Typeface.BOLD)
+            setPadding(0, dp(8), 0, dp(4))
+        }
+        col.addView(dayLabel)
+        summaryView = TextView(this).apply { textSize = 14f }
+        col.addView(summaryView)
+        col.addView(button("تصدير ملخص اليوم (PDF) إلى التنزيلات") { exportSummary() })
 
         setContentView(ScrollView(this).apply { addView(col) })
     }
@@ -213,6 +246,7 @@ class MainActivity : Activity() {
         sb.append("الجلسة: ").append(if (settings.active) "🟢 نشطة" else "⚪ متوقفة")
         if (settings.paused) sb.append(" (إيقاف مؤقت)")
         sb.append("\n")
+        sb.append("التتبع: ").append(motionStateText()).append("\n")
         sb.append("عدد الصور المحفوظة: ").append(store.count()).append("\n")
         sb.append("نقاط المسار: ").append(store.trackPointCount()).append("\n")
         sb.append("آخر صورة: ").append(if (last != null) timeFormat.format(Date(last)) else "لا يوجد").append("\n")
@@ -236,12 +270,68 @@ class MainActivity : Activity() {
         }
 
         val trackCount = store.trackPointCount()
-        if (count != mapCount || trackCount != mapTrackCount) {
+        val eventCount = store.events().size
+        if (count != mapCount || trackCount != mapTrackCount || eventCount != mapEventCount) {
             mapCount = count
             mapTrackCount = trackCount
-            mapView.setData(store.trackPoints(), store.photoPoints())
+            mapEventCount = eventCount
+            mapView.setData(store.trackPoints(), store.photoPoints(), StopPairing.pair(store.events()))
             mapView.setSelected(imageIndex)
+            renderSummary()
         }
+    }
+
+    private fun motionStateText(): String = when {
+        !settings.active -> "⚪ الجلسة متوقفة"
+        settings.motionState == "moving" -> "🚶 قيد التتبع (متحرك)"
+        settings.motionState == "stopped" ->
+            "⏸ متوقف منذ " + timeFormat.format(Date(settings.stopSince))
+        else -> "⚪ لا يسجّل الآن (خارج الدوام أو إيقاف مؤقت)"
+    }
+
+    // ---------------------------------------------------------------- ملخص اليوم
+
+    private fun renderSummary() {
+        val (start, end) = Days.range(dayOffset)
+        val now = System.currentTimeMillis()
+        val summary = DaySummaryBuilder.build(
+            start, end, now, store.timedTrack(), store.events(), store.photoTimes()
+        )
+        dayLabel.text = SimpleDateFormat("EEEE dd/MM/yyyy", Locale("ar", "MA")).format(Date(start))
+        val sb = StringBuilder()
+        for (l in SummaryText.statLines(summary)) sb.append(l).append("\n")
+        val stopLines = SummaryText.stopLines(summary, now)
+        if (stopLines.isNotEmpty()) {
+            sb.append("\nالتوقفات:\n")
+            for (l in stopLines.takeLast(30)) sb.append(l).append("\n")
+        }
+        summaryView.text = sb.toString()
+    }
+
+    private fun exportSummary() {
+        if (Build.VERSION.SDK_INT < 29 && !has(Manifest.permission.WRITE_EXTERNAL_STORAGE)) {
+            requestPermissions(arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE), REQ_SUMMARY)
+            return
+        }
+        val (start, end) = Days.range(dayOffset)
+        toast("جارٍ إنشاء ملف PDF")
+        Thread {
+            val result = Exporter.exportSummaryPdf(applicationContext, store, start, end)
+            runOnUiThread { toast(result.message) }
+        }.start()
+    }
+
+    private fun updatePhotoOnStopText() {
+        photoOnStopButton.text = if (settings.photoOnStop) {
+            "الصورة التلقائية عند التوقف الطويل: مفعّلة (اضغط للتعطيل)"
+        } else {
+            "الصورة التلقائية عند التوقف الطويل: معطّلة (اضغط للتفعيل)"
+        }
+    }
+
+    private fun togglePhotoOnStop() {
+        settings.photoOnStop = !settings.photoOnStop
+        updatePhotoOnStopText()
     }
 
     private fun delayedRefresh() {
@@ -285,6 +375,12 @@ class MainActivity : Activity() {
             toast("بداية الدوام من 0 إلى 23، ونهايته من 1 إلى 24")
             return false
         }
+        val stopS = stopField.text.toString().toIntOrNull()
+        if (stopS == null || stopS !in 10..600) {
+            toast("مدة التوقف الطويل من 10 إلى 600 ثانية")
+            return false
+        }
+        settings.stopAfterSeconds = stopS
         settings.minMinutes = minM
         settings.maxMinutes = maxM
         settings.startHour = s
@@ -339,9 +435,9 @@ class MainActivity : Activity() {
             toast("الآن اختر \"السماح طوال الوقت\" للموقع")
             requestPermissions(arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION), 2)
         }
-        if (requestCode == REQ_EXPORT) {
+        if (requestCode == REQ_EXPORT || requestCode == REQ_SUMMARY) {
             if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                doExport()
+                if (requestCode == REQ_EXPORT) doExport() else exportSummary()
             } else {
                 toast("لا يمكن التصدير دون صلاحية التخزين")
             }
@@ -377,7 +473,10 @@ class MainActivity : Activity() {
             val dir = File(cacheDir, "shared").apply { mkdirs() }
             val file = File(dir, "map.html")
             file.writeText(
-                MapHtml.build(store.trackPoints(), store.photoPoints(), withImages = false),
+                MapHtml.build(
+                    store.trackPoints(), store.photoPoints(),
+                    StopPairing.pair(store.events()), withImages = false
+                ),
                 Charsets.UTF_8
             )
             val uri = FileProvider.getUriForFile(this, "$packageName.files", file)

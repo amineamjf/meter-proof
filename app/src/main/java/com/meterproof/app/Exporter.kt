@@ -5,6 +5,7 @@ import android.content.Context
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
 import java.io.OutputStream
@@ -17,6 +18,8 @@ import java.util.Locale
  *   images/           الصور بعد التشويه بصيغة jpg (كما هي، دون أي تعديل)
  *   records.jsonl     سجل الصور وسلسلة البصمات
  *   track.jsonl       مسار GPS
+ *   events.jsonl      أحداث التوقف والتلاعب وبداية/نهاية الجلسات (بسلسلة بصمات)
+ *   summary_today.pdf ملخص اليوم الحالي
  *   verification.txt  نتيجة التحقق من السلسلة لحظة التصدير
  *   map.html          الخارطة التفاعلية (تُفتح في المتصفح، وتحتاج إنترنت لعرض الخارطة فقط)
  *
@@ -41,21 +44,62 @@ object Exporter {
             }
             copyIfExists(context, dir, store.recordsFileRaw(), "records.jsonl")
             copyIfExists(context, dir, store.trackFileRaw(), "track.jsonl")
+            copyIfExists(context, dir, store.eventsFileRaw(), "events.jsonl")
 
             val verification = store.verify()
             write(context, dir, "verification.txt", "text/plain") { out ->
                 out.write((verification + "\n").toByteArray(Charsets.UTF_8))
             }
 
-            val html = MapHtml.build(store.trackPoints(), store.photoPoints(), withImages = true)
+            val stops = StopPairing.pair(store.events())
+            val html = MapHtml.build(store.trackPoints(), store.photoPoints(), stops, withImages = true)
             write(context, dir, "map.html", "text/html") { out ->
                 out.write(html.toByteArray(Charsets.UTF_8))
+            }
+
+            // ملخص اليوم الحالي بصيغة PDF (فشله لا يُسقط بقية التصدير)
+            try {
+                val (s, e) = Days.range(0)
+                val pdf = summaryPdfBytes(store, s, e, verification)
+                write(context, dir, "summary_today.pdf", "application/pdf") { out -> out.write(pdf) }
+            } catch (ex: Exception) {
+                // نتابع بدون الملخص
             }
 
             Result(true, "تم تصدير ${images.size} صورة إلى: التنزيلات/$dir")
         } catch (e: Exception) {
             Result(false, "فشل التصدير: ${e.message ?: e.javaClass.simpleName}")
         }
+    }
+
+    /** يصدّر ملخص يوم واحد (PDF) إلى Download/MeterProof/. */
+    fun exportSummaryPdf(
+        context: Context, store: EvidenceStore, dayStartMs: Long, dayEndMs: Long
+    ): Result {
+        return try {
+            val pdf = summaryPdfBytes(store, dayStartMs, dayEndMs, store.verify())
+            val name = "summary_" + SimpleDateFormat("yyyyMMdd", Locale.US).format(Date(dayStartMs)) + ".pdf"
+            write(context, "MeterProof", name, "application/pdf") { out -> out.write(pdf) }
+            Result(true, "تم حفظ الملخص: التنزيلات/MeterProof/$name")
+        } catch (e: Exception) {
+            Result(false, "فشل تصدير الملخص: ${e.message ?: e.javaClass.simpleName}")
+        }
+    }
+
+    private fun summaryPdfBytes(
+        store: EvidenceStore, dayStartMs: Long, dayEndMs: Long, verification: String
+    ): ByteArray {
+        val now = System.currentTimeMillis()
+        val summary = DaySummaryBuilder.build(
+            dayStartMs, dayEndMs, now, store.timedTrack(), store.events(), store.photoTimes()
+        )
+        val dayTrack = store.timedTrack()
+            .filter { it.t in dayStartMs until dayEndMs }
+            .map { GeoPoint(it.lat, it.lon) }
+        val dayPhotos = store.photoPoints().filter { it.timeMillis in dayStartMs until dayEndMs }
+        val bos = ByteArrayOutputStream()
+        PdfReport.write(summary, now, dayTrack, dayPhotos, verification, bos)
+        return bos.toByteArray()
     }
 
     private fun copyIfExists(context: Context, dir: String, src: File, name: String) {

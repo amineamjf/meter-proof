@@ -45,4 +45,7 @@ dependencies {
     // كشف الوجوه على الجهاز (النموذج مضمّن ويعمل دون إنترنت)
     implementation("com.google.mlkit:face-detection:16.1.6")
     implementation("com.google.android.gms:play-services-tasks:18.2.0")
+
+    // اختبارات الوحدة للمنطق النقي (التوقف والحركة وملخص اليوم)
+    testImplementation("junit:junit:4.13.2")
 }

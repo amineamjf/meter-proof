@@ -14,7 +14,7 @@ import java.util.Locale
 
 /**
  * تصدير الأدلة إلى مجلد التنزيلات (Download/MeterProof/<التاريخ>/):
- *   images/*.jpg      الصور بعد التشويه (كما هي، دون أي تعديل)
+ *   images/           الصور بعد التشويه بصيغة jpg (كما هي، دون أي تعديل)
  *   records.jsonl     سجل الصور وسلسلة البصمات
  *   track.jsonl       مسار GPS
  *   verification.txt  نتيجة التحقق من السلسلة لحظة التصدير

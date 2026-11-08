@@ -115,12 +115,29 @@ class RoundImportTest {
     }
 
     @Test
-    fun customer_names_are_not_carried_into_rows() {
+    fun customer_name_and_new_index_are_read_in_experiment_build() {
         val res = RoundImport.parseFile(
             buildXlsx(listOf(row("A1", "RUE 1 QUARTIER X", "34.1, -5.1")))
         )
-        val text = res.meters.joinToString { it.toString() }
-        assertTrue(!text.contains("CLIENT TEST"))
+        val m = res.meters[0]
+        if (CustomerInfo.SHOW) {
+            assertEquals("CLIENT TEST", m.customerName)
+        } else {
+            // عند إخفاء بيانات الزبون لا يُنقل الاسم إلى الهاتف إطلاقًا
+            assertEquals("", m.customerName)
+        }
+        assertEquals(499L, m.oldIndex)
+        assertEquals(505L, m.newIndex)
+    }
+
+    @Test
+    fun customer_name_header_aliases_are_detected() {
+        val aliases = listOf("Client / Nom", "Nom Client", "Abonné", "Titulaire", "Nom")
+        for (h in aliases) {
+            val cols = RoundColumns.detect(listOf("N° Compteur", "Adresse", h))
+            if (CustomerInfo.SHOW) assertEquals("alias: $h", 2, cols.customerName)
+        }
+        assertEquals(3, RoundColumns.detect(listOf("N° Compteur", "Adresse", "x", "Nouvel index")).newIndex)
     }
 
     @Test
@@ -208,7 +225,7 @@ class RoundImportTest {
     // ---------------------------------------------------------------- الأقرب أولًا
 
     private fun item(id: Long, address: String, lat: Double?, lon: Double?) = MeterItem(
-        id, "M$id", "", address, "Q", lat, lon, null, false, 0L, null, ""
+        id, "M$id", "", address, "Q", lat, lon, null, "", null, false, 0L, null, ""
     )
 
     @Test

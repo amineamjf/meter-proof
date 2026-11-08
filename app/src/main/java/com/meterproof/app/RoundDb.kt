@@ -17,7 +17,7 @@ data class QuartierStat(val name: String, val total: Int, val done: Int)
  * حالة الإنجاز مستقلة عن ملف الاستيراد: إعادة استيراد الملف تحفظ ما أُنجز وما تعلّمه التطبيق من إحداثيات.
  */
 class RoundDb(context: Context) :
-    SQLiteOpenHelper(context.applicationContext, "round.db", null, 1) {
+    SQLiteOpenHelper(context.applicationContext, "round.db", null, 2) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -30,6 +30,8 @@ class RoundDb(context: Context) :
                 lat REAL,
                 lon REAL,
                 old_index INTEGER,
+                customer_name TEXT,
+                new_index INTEGER,
                 learned INTEGER NOT NULL DEFAULT 0,
                 done_at INTEGER NOT NULL DEFAULT 0,
                 record_id TEXT,
@@ -40,7 +42,10 @@ class RoundDb(context: Context) :
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // لا ترقيات بعد
+        if (oldVersion < 2) {
+            db.execSQL("ALTER TABLE meters ADD COLUMN customer_name TEXT")
+            db.execSQL("ALTER TABLE meters ADD COLUMN new_index INTEGER")
+        }
     }
 
     /** يستبدل قائمة العدادات بالجديدة مع حفظ حالة الإنجاز والإحداثيات المتعلَّمة. يعيد عدد العدادات. */
@@ -71,8 +76,9 @@ class RoundDb(context: Context) :
 
             db.delete("meters", null, null)
             val st = db.compileStatement(
-                "INSERT OR IGNORE INTO meters (meter_no, contract, address, quartier, lat, lon, old_index) " +
-                    "VALUES (?,?,?,?,?,?,?)"
+                "INSERT OR IGNORE INTO meters " +
+                    "(meter_no, contract, address, quartier, lat, lon, old_index, customer_name, new_index) " +
+                    "VALUES (?,?,?,?,?,?,?,?,?)"
             )
             var n = 0
             for (r in rows) {
@@ -89,6 +95,8 @@ class RoundDb(context: Context) :
                     st.bindNull(6)
                 }
                 if (r.oldIndex != null) st.bindLong(7, r.oldIndex) else st.bindNull(7)
+                st.bindString(8, r.customerName)
+                if (r.newIndex != null) st.bindLong(9, r.newIndex) else st.bindNull(9)
                 if (st.executeInsert() != -1L) n++
             }
 
@@ -125,14 +133,16 @@ class RoundDb(context: Context) :
         lat = if (c.isNull(5)) null else c.getDouble(5),
         lon = if (c.isNull(6)) null else c.getDouble(6),
         oldIndex = if (c.isNull(7)) null else c.getLong(7),
-        learned = c.getInt(8) == 1,
-        doneAt = c.getLong(9),
-        recordId = c.getString(10),
-        flags = c.getString(11) ?: ""
+        customerName = c.getString(8) ?: "",
+        newIndex = if (c.isNull(9)) null else c.getLong(9),
+        learned = c.getInt(10) == 1,
+        doneAt = c.getLong(11),
+        recordId = c.getString(12),
+        flags = c.getString(13) ?: ""
     )
 
     private val columns =
-        "id, meter_no, contract, address, quartier, lat, lon, old_index, learned, done_at, record_id, flags"
+        "id, meter_no, contract, address, quartier, lat, lon, old_index, customer_name, new_index, learned, done_at, record_id, flags"
 
     @Synchronized
     fun get(id: Long): MeterItem? =

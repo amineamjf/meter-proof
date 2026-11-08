@@ -6,6 +6,10 @@ import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.GradientDrawable
+import android.content.res.ColorStateList
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
@@ -15,11 +19,17 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.text.Editable
+import android.text.TextWatcher
+import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.BaseAdapter
 import android.widget.Button
 import android.widget.CheckBox
+import android.widget.EditText
+import android.widget.HorizontalScrollView
+import android.widget.ProgressBar
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
@@ -48,8 +58,23 @@ class RoundActivity : Activity() {
 
     private lateinit var totalsView: TextView
     private lateinit var locView: TextView
-    private lateinit var quartierButton: Button
+    private lateinit var progressBar: ProgressBar
+    private lateinit var chipsRow: LinearLayout
     private lateinit var listView: ListView
+
+    private var query = ""
+    private var lastChipsKey = ""
+    private var hashes: Map<String, String> = emptyMap()
+
+    // ألوان الواجهة
+    private val cBg = Color.parseColor("#F3F5F8")
+    private val cInk = Color.parseColor("#1F2933")
+    private val cMuted = Color.parseColor("#667085")
+    private val cLine = Color.parseColor("#E4E7EC")
+    private val cPending = Color.parseColor("#98A2B3")
+    private val cDone = Color.parseColor("#2E7D32")
+    private val cWarn = Color.parseColor("#EF6C00")
+    private val cAccent = Color.parseColor("#1D4ED8")
 
     private val ui = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor()
@@ -101,37 +126,72 @@ class RoundActivity : Activity() {
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(10), dp(28), dp(10), dp(8))
+            setBackgroundColor(cBg)
+            setPadding(dp(12), dp(28), dp(12), dp(8))
         }
-        root.addView(TextView(this).apply {
-            text = "جولة العدادات"
-            textSize = 20f
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-        })
-        totalsView = TextView(this).apply {
-            textSize = 14f
-            setPadding(0, dp(4), 0, dp(4))
-        }
+        root.addView(label(22f, cInk, true).apply { text = "جولة التوزيع" })
+        totalsView = label(13f, cMuted).apply { setPadding(0, dp(2), 0, dp(6)) }
         root.addView(totalsView)
 
-        root.addView(button("استيراد ملف الجولة (Excel أو CSV)") { pickFile() })
-        quartierButton = button("الحي: كل الأحياء") { chooseQuartier() }
-        root.addView(quartierButton)
-        root.addView(CheckBox(this).apply {
-            text = "إظهار العدادات المنجزة"
+        progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 1000
+            progressTintList = ColorStateList.valueOf(cDone)
+            progressBackgroundTintList = ColorStateList.valueOf(cLine)
+        }
+        root.addView(progressBar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(8)))
+
+        val actions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(10), 0, dp(6))
+        }
+        actions.addView(pill("⬆ استيراد ملف الجولة", true) { pickFile() })
+        actions.addView(CheckBox(this).apply {
+            text = "إظهار ما تم تسجيله"
+            textSize = 13f
+            setTextColor(cMuted)
             isChecked = settings.roundShowDone
             setOnCheckedChangeListener { _, checked ->
                 settings.roundShowDone = checked
                 refresh()
             }
         })
-        locView = TextView(this).apply {
-            textSize = 13f
-            setPadding(0, dp(2), 0, dp(6))
-        }
+        root.addView(actions)
+
+        chipsRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        root.addView(HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            addView(chipsRow)
+        })
+
+        root.addView(EditText(this).apply {
+            hint = "بحث: رقم العداد أو الاسم أو الشارع"
+            textSize = 14f
+            setSingleLine()
+            setTextColor(cInk)
+            setHintTextColor(cPending)
+            background = shape(Color.WHITE, 12, cLine)
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, st: Int, c: Int, a: Int) {}
+                override fun onTextChanged(s: CharSequence?, st: Int, b: Int, c: Int) {}
+                override fun afterTextChanged(s: Editable?) {
+                    query = s?.toString()?.trim() ?: ""
+                    refresh()
+                }
+            })
+        }, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = dp(8) })
+
+        locView = label(12f, cMuted).apply { setPadding(0, dp(6), 0, dp(4)) }
         root.addView(locView)
 
-        listView = ListView(this)
+        listView = ListView(this).apply {
+            divider = null
+            dividerHeight = 0
+            selector = ColorDrawable(Color.TRANSPARENT)
+            setBackgroundColor(Color.TRANSPARENT)
+        }
         listView.adapter = adapter
         listView.setOnItemClickListener { _, _, position, _ ->
             ranked.getOrNull(position)?.let { showDetails(it) }
@@ -139,7 +199,6 @@ class RoundActivity : Activity() {
         root.addView(listView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
 
-        updateQuartierButton()
         showLocation()
     }
 
@@ -165,6 +224,166 @@ class RoundActivity : Activity() {
             this.text = text
             setOnClickListener { onClick() }
         }
+
+
+    // ---------------------------------------------------------------- أدوات الشكل
+
+    private fun shape(fill: Int, radiusDp: Int, stroke: Int = 0): GradientDrawable =
+        GradientDrawable().apply {
+            setColor(fill)
+            cornerRadius = dp(radiusDp).toFloat()
+            if (stroke != 0) setStroke(dp(1), stroke)
+        }
+
+    private fun label(size: Float, color: Int, bold: Boolean = false): TextView =
+        TextView(this).apply {
+            textSize = size
+            setTextColor(color)
+            if (bold) setTypeface(typeface, Typeface.BOLD)
+        }
+
+    private fun pill(text: String, filled: Boolean, onClick: () -> Unit): TextView =
+        TextView(this).apply {
+            this.text = text
+            textSize = 13f
+            setTextColor(if (filled) Color.WHITE else cInk)
+            background = shape(if (filled) cAccent else Color.WHITE, 18, if (filled) cAccent else cLine)
+            setPadding(dp(14), dp(8), dp(14), dp(8))
+            setOnClickListener { onClick() }
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { marginEnd = dp(10) }
+        }
+
+    private fun chip(text: String, selected: Boolean, onClick: () -> Unit): TextView =
+        TextView(this).apply {
+            this.text = text
+            textSize = 13f
+            setTextColor(if (selected) Color.WHITE else cInk)
+            background = shape(if (selected) cInk else Color.WHITE, 16, if (selected) cInk else cLine)
+            setPadding(dp(12), dp(6), dp(12), dp(6))
+            setOnClickListener { onClick() }
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { marginEnd = dp(6) }
+        }
+
+    private class CardHolder(
+        val strip: View,
+        val meterNo: TextView,
+        val dist: TextView,
+        val name: TextView,
+        val address: TextView,
+        val quartier: TextView,
+        val indexes: TextView,
+        val status: TextView
+    )
+
+    /** بطاقة نقطة التسليم: متوسطة الحجم، شريط ملوّن للحالة، ثم الرقم والزبون والعنوان والفهرسان والبصمة. */
+    private fun buildCard(): View {
+        val strip = View(this)
+        val meterNo = label(16f, cInk, true)
+        val dist = label(12f, cAccent, true)
+        val name = label(15f, cInk).apply { setPadding(0, dp(2), 0, 0) }
+        val address = label(13f, cMuted).apply {
+            maxLines = 2
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }
+        val quartier = label(11f, cMuted).apply {
+            background = shape(Color.parseColor("#F2F4F7"), 8)
+            setPadding(dp(8), dp(2), dp(8), dp(2))
+        }
+        val indexes = label(12f, cMuted).apply { setPadding(dp(8), 0, 0, 0) }
+        val status = label(13f, cMuted, true)
+
+        val row1 = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(meterNo, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(dist)
+        }
+        val row3 = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(6), 0, 0)
+            addView(quartier)
+            addView(indexes, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        }
+        val divider = View(this).apply { setBackgroundColor(Color.parseColor("#EEF0F3")) }
+
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            addView(row1)
+            addView(name)
+            addView(address)
+            addView(row3)
+            addView(divider, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply {
+                topMargin = dp(8)
+                bottomMargin = dp(8)
+            })
+            addView(status)
+        }
+
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            background = shape(Color.WHITE, 14, cLine)
+            clipToOutline = true
+            addView(strip, LinearLayout.LayoutParams(dp(6), ViewGroup.LayoutParams.MATCH_PARENT))
+            addView(body, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        }
+        val wrapper = LinearLayout(this).apply {
+            setPadding(dp(1), dp(5), dp(1), dp(5))
+            addView(card, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ))
+        }
+        wrapper.tag = CardHolder(strip, meterNo, dist, name, address, quartier, indexes, status)
+        return wrapper
+    }
+
+    private fun bindCard(h: CardHolder, r: RankedMeter) {
+        val m = r.item
+        h.meterNo.text = "العداد ${m.meterNo}"
+        val d = r.distanceM
+        h.dist.text = if (d != null) SummaryText.distance(d) else ""
+        h.dist.visibility = if (d != null) View.VISIBLE else View.GONE
+
+        if (CustomerInfo.SHOW && m.customerName.isNotEmpty()) {
+            h.name.text = m.customerName
+            h.name.visibility = View.VISIBLE
+        } else {
+            h.name.visibility = View.GONE
+        }
+        h.address.text = m.address.ifEmpty { "(بلا عنوان)" }
+        h.quartier.text = m.quartier
+
+        val idx = StringBuilder()
+        idx.append("القديم ").append(m.oldIndex ?: "—").append("  ←  الجديد ").append(m.newIndex ?: "—")
+        if (!m.hasGps) idx.append("  ·  بلا إحداثية")
+        h.indexes.text = idx.toString()
+
+        val far = m.flags.contains("FAR_FROM_METER")
+        val color: Int
+        val text: String
+        if (m.done) {
+            val hs = m.recordId?.let { hashes[it] }.orEmpty()
+            val hashPart = if (hs.isNotEmpty()) "  ·  بصمة #" + hs.take(6) else ""
+            val time = timeFormat.format(Date(m.doneAt))
+            if (far) {
+                color = cWarn
+                text = "⚠ صُوِّر $time  ·  بعيد عن الإحداثية$hashPart"
+            } else {
+                color = cDone
+                text = "✅ صُوِّر $time$hashPart"
+            }
+        } else {
+            color = cPending
+            text = "لم يُسجَّل التسليم بعد"
+        }
+        h.status.text = text
+        h.status.setTextColor(color)
+        h.strip.setBackgroundColor(color)
+    }
 
     // ---------------------------------------------------------------- الموقع
 
@@ -235,24 +454,9 @@ class RoundActivity : Activity() {
         override fun getItemId(position: Int): Long = ranked[position].item.id
 
         override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-            val tv = (convertView as? TextView) ?: TextView(this@RoundActivity).apply {
-                textSize = 15f
-                setPadding(dp(6), dp(10), dp(6), dp(10))
-            }
-            val r = ranked[position]
-            val m = r.item
-            val dist = r.distanceM?.let { SummaryText.distance(it) } ?: "—"
-            val address = m.address.ifEmpty { "(بلا عنوان)" }
-            val sb = StringBuilder()
-            sb.append(dist).append("   ").append(address).append("\n")
-            sb.append("العداد ").append(m.meterNo)
-            if (m.oldIndex != null) sb.append(" · القديم ").append(m.oldIndex)
-            if (!m.hasGps) sb.append(" · بلا إحداثية")
-            if (m.done) sb.append(" · ✅")
-            if (m.flags.contains("FAR_FROM_METER")) sb.append(" · ⚠ بعيد")
-            tv.text = sb.toString()
-            tv.setTextColor(if (m.done) Color.parseColor("#78909C") else Color.parseColor("#212121"))
-            return tv
+            val v = convertView ?: buildCard()
+            bindCard(v.tag as CardHolder, ranked[position])
+            return v
         }
     }
 
@@ -261,76 +465,93 @@ class RoundActivity : Activity() {
         val showDone = settings.roundShowDone
         val loc = location
         val waiting = waitingMeterId
+        val q = query.lowercase()
         worker.execute {
             try {
                 val totals = db.totals()
-                val items = db.candidates(quartier, showDone)
+                val stats = db.quartiers()
+                val all = db.candidates(quartier, showDone)
+                val items = if (q.isEmpty()) all else all.filter {
+                    it.meterNo.lowercase().contains(q) ||
+                        it.customerName.lowercase().contains(q) ||
+                        it.address.lowercase().contains(q) ||
+                        it.contract.lowercase().contains(q)
+                }
                 val list = RoundLogic.rank(items, loc?.latitude, loc?.longitude, LIST_LIMIT)
                 val waited = if (waiting > 0) db.get(waiting) else null
-                ui.post { applyRefresh(totals, list, waited) }
+                var h = hashes
+                if (list.any { it.item.done && it.item.recordId != null && !h.containsKey(it.item.recordId) }) {
+                    h = try {
+                        EvidenceStore(this).readRecords().associate { it.optString("id") to it.optString("hash") }
+                    } catch (e: Exception) {
+                        h
+                    }
+                }
+                ui.post { applyRefresh(totals, stats, list, waited, h) }
             } catch (e: Exception) {
                 // محاولة لاحقة بعد 5 ثوانٍ
             }
         }
     }
 
-    private fun applyRefresh(totals: RoundTotals, list: List<RankedMeter>, waited: MeterItem?) {
+    private fun applyRefresh(
+        totals: RoundTotals,
+        stats: List<QuartierStat>,
+        list: List<RankedMeter>,
+        waited: MeterItem?,
+        h: Map<String, String>
+    ) {
         ranked = list
+        hashes = h
         (listView.adapter as BaseAdapter).notifyDataSetChanged()
 
-        totalsView.text = if (totals.total == 0) {
-            "لم تستورد جولة بعد. اضغط «استيراد ملف الجولة»."
+        if (totals.total == 0) {
+            totalsView.text = "لم تستورد جولة بعد. اضغط «استيراد ملف الجولة»."
+            progressBar.progress = 0
         } else {
-            "الجولة: ${totals.total} عدادًا   المنجز: ${totals.done}   " +
-                "بلا إحداثية: ${totals.total - totals.withGps}" +
-                (if (totals.flagged > 0) "   ⚠ بعيد: ${totals.flagged}" else "")
+            totalsView.text = "${totals.done} من ${totals.total} تم تسجيله" +
+                "  ·  بلا إحداثية ${totals.total - totals.withGps}" +
+                (if (totals.flagged > 0) "  ·  ⚠ بعيد ${totals.flagged}" else "")
+            progressBar.progress = totals.done * 1000 / totals.total
         }
+        rebuildChips(stats)
 
         if (waited != null && waitingMeterId == waited.id && waited.doneAt >= waitingSince) {
             waitingMeterId = -1L
             toast(
                 if (waited.flags.contains("FAR_FROM_METER")) {
-                    "✅ سُجّلت صورة العداد ${waited.meterNo}، لكن ⚠ موقعك بعيد عن إحداثيته"
+                    "✅ سُجّلت صورة التسليم للعداد ${waited.meterNo}، لكن ⚠ موقعك بعيد عن إحداثيته"
                 } else {
-                    "✅ سُجّلت صورة العداد ${waited.meterNo}"
+                    "✅ سُجّلت صورة التسليم للعداد ${waited.meterNo}"
                 }
             )
         }
     }
 
-    // ---------------------------------------------------------------- الحي
+    // ---------------------------------------------------------------- الأحياء
 
-    private fun updateQuartierButton() {
-        val q = settings.roundQuartier
-        quartierButton.text = "الحي: " + (if (q.isEmpty()) "كل الأحياء" else q) + "  (اضغط للتغيير)"
+    private fun resetChips() {
+        lastChipsKey = ""
     }
 
-    private fun chooseQuartier() {
-        worker.execute {
-            val stats = try {
-                db.quartiers()
-            } catch (e: Exception) {
-                emptyList()
-            }
-            ui.post {
-                if (stats.isEmpty()) {
-                    toast("استورد ملف الجولة أولًا")
-                    return@post
-                }
-                val total = stats.sumOf { it.total }
-                val done = stats.sumOf { it.done }
-                val labels = ArrayList<String>()
-                labels.add("كل الأحياء ($done/$total)")
-                for (s in stats) labels.add("${s.name} (${s.done}/${s.total})")
-                AlertDialog.Builder(this)
-                    .setTitle("اختر الحي (المنجز/الكل)")
-                    .setItems(labels.toTypedArray()) { _, which ->
-                        settings.roundQuartier = if (which == 0) "" else stats[which - 1].name
-                        updateQuartierButton()
-                        refresh()
-                    }
-                    .show()
-            }
+    private fun rebuildChips(stats: List<QuartierStat>) {
+        val selected = settings.roundQuartier
+        val key = selected + "|" + stats.joinToString(",") { "${it.name}:${it.done}/${it.total}" }
+        if (key == lastChipsKey) return
+        lastChipsKey = key
+        chipsRow.removeAllViews()
+        if (stats.isEmpty()) return
+        val total = stats.sumOf { it.total }
+        val done = stats.sumOf { it.done }
+        chipsRow.addView(chip("الكل $done/$total", selected.isEmpty()) {
+            settings.roundQuartier = ""
+            refresh()
+        })
+        for (st in stats) {
+            chipsRow.addView(chip("${st.name} ${st.done}/${st.total}", selected == st.name) {
+                settings.roundQuartier = st.name
+                refresh()
+            })
         }
     }
 
@@ -390,7 +611,7 @@ class RoundActivity : Activity() {
                     message("تعذر الحفظ", "فشل حفظ الجولة في قاعدة الهاتف")
                 } else {
                     settings.roundQuartier = ""
-                    updateQuartierButton()
+                    resetChips()
                     showImportSummary(result, saved)
                     refresh()
                 }
@@ -401,14 +622,22 @@ class RoundActivity : Activity() {
     private fun showImportSummary(r: ImportResult, saved: Int) {
         val pct = if (saved > 0) r.withGps * 100 / saved else 0
         val quartiers = r.meters.map { it.quartier }.toSet().size
+        val names = r.meters.count { it.customerName.isNotEmpty() }
+        val oldIdx = r.meters.count { it.oldIndex != null }
+        val newIdx = r.meters.count { it.newIndex != null }
         val sb = StringBuilder()
-        sb.append("تم استيراد ").append(saved).append(" عدادًا في ").append(quartiers).append(" حيًا.\n\n")
-        sb.append("بإحداثية: ").append(r.withGps).append(" (").append(pct).append("%)\n")
-        sb.append("بلا إحداثية: ").append(saved - r.withGps)
+        sb.append("تم استيراد ").append(saved).append(" نقطة في ").append(quartiers).append(" حيًا.\n\n")
+        sb.append("• بإحداثية: ").append(r.withGps).append(" (").append(pct).append("%)\n")
+        sb.append("• بلا إحداثية: ").append(saved - r.withGps)
         sb.append(" (يتعلّمها التطبيق عند أول تصوير)\n")
-        if (r.duplicates > 0) sb.append("مكرّر تجاهلته: ").append(r.duplicates).append("\n")
-        if (r.skippedNoMeter > 0) sb.append("بلا رقم عداد: ").append(r.skippedNoMeter).append("\n")
-        sb.append("\nلم تُنقل إلى الهاتف أسماء الزبائن ولا بقية الأعمدة.")
+        if (CustomerInfo.SHOW) sb.append("• بأسماء الزبائن: ").append(names).append("\n")
+        sb.append("• بفهرس قديم: ").append(oldIdx).append("\n")
+        sb.append("• بفهرس جديد: ").append(newIdx).append("\n")
+        if (r.duplicates > 0) sb.append("• مكرّر تجاهلته: ").append(r.duplicates).append("\n")
+        if (r.skippedNoMeter > 0) sb.append("• بلا رقم عداد: ").append(r.skippedNoMeter).append("\n")
+        if (CustomerInfo.SHOW && names == 0) {
+            sb.append("\n⚠ لم أجد عمود اسم الزبون. العناوين المقبولة: Nom، Client، Abonné، Titulaire، Nom Client.")
+        }
         message("اكتمل الاستيراد", sb.toString())
     }
 
@@ -421,10 +650,12 @@ class RoundActivity : Activity() {
     private fun showDetails(r: RankedMeter) {
         val m = r.item
         val sb = StringBuilder()
+        if (CustomerInfo.SHOW && m.customerName.isNotEmpty()) sb.append(m.customerName).append("\n")
         sb.append(m.address.ifEmpty { "(بلا عنوان)" }).append("\n\n")
         sb.append("الحي: ").append(m.quartier).append("\n")
         if (m.contract.isNotEmpty()) sb.append("العقد: ").append(m.contract).append("\n")
-        if (m.oldIndex != null) sb.append("الفهرس القديم: ").append(m.oldIndex).append("\n")
+        sb.append("الفهرس القديم: ").append(m.oldIndex ?: "—").append("\n")
+        sb.append("الفهرس الجديد: ").append(m.newIndex ?: "—").append("\n")
         sb.append("المسافة عنك: ").append(r.distanceM?.let { SummaryText.distance(it) } ?: "غير معروفة").append("\n")
         sb.append(
             if (m.hasGps) {
@@ -435,13 +666,15 @@ class RoundActivity : Activity() {
         ).append("\n")
         if (m.done) {
             sb.append("\n✅ صُوِّر ").append(timeFormat.format(Date(m.doneAt)))
+            val hs = m.recordId?.let { hashes[it] }.orEmpty()
+            if (hs.isNotEmpty()) sb.append("\nالبصمة: ").append(hs.take(16))
             if (m.flags.isNotEmpty()) sb.append("\n⚠ ").append(m.flags)
         }
 
         AlertDialog.Builder(this)
             .setTitle("العداد " + m.meterNo)
             .setMessage(sb.toString())
-            .setPositiveButton(if (m.done) "إعادة التصوير" else "تصوير العداد الآن") { _, _ -> capture(m) }
+            .setPositiveButton(if (m.done) "إعادة التصوير" else "تسجيل التسليم بالصورة") { _, _ -> capture(m) }
             .setNegativeButton("إغلاق", null)
             .show()
     }
@@ -469,7 +702,7 @@ class RoundActivity : Activity() {
             this, m.id, loc.latitude, loc.longitude, loc.accuracy,
             loc.elapsedRealtimeNanos, loc.isMockCompat()
         )
-        toast("جارٍ التصوير الآن (نحو ثانيتين). وجّه الهاتف نحو العداد وثبّته")
+        toast("جارٍ التصوير الآن (نحو ثانيتين). وجّه الهاتف نحو الباب أو العداد وثبّته")
         ui.postDelayed({ refresh() }, 3500L)
         ui.postDelayed({ refresh() }, 7000L)
     }

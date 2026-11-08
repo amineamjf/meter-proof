@@ -8,11 +8,11 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.meterproof.app"
+        applicationId = "com.meterproof.app.v2" // نسخة redesign: تُثبَّت بجانب الأصلية ولا تستبدلها
         minSdk = 28
         targetSdk = 34
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = "0.2.0-redesign"
     }
 
     buildTypes {

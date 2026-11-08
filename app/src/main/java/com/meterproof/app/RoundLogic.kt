@@ -1,5 +1,13 @@
 package com.meterproof.app
 
+/**
+ * مفتاح واحد لإظهار بيانات الزبون (الاسم) في نسخة التجربة.
+ * اجعله false عندما ينضج التطبيق: لا يُقرأ الاسم من الملف ولا يُعرض في البطاقات.
+ */
+object CustomerInfo {
+    const val SHOW = true
+}
+
 /** عداد في الجولة كما هو مخزن على الهاتف. */
 data class MeterItem(
     val id: Long,
@@ -10,6 +18,8 @@ data class MeterItem(
     val lat: Double?,
     val lon: Double?,
     val oldIndex: Long?,
+    val customerName: String,
+    val newIndex: Long?,
     val learned: Boolean,
     val doneAt: Long,
     val recordId: String?,

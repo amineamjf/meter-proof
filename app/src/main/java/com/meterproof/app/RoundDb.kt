@@ -241,6 +241,18 @@ class RoundDb(context: Context) :
         return out
     }
 
+    /** كل عدادات الجولة التي لها إحداثية، لرسمها على الخارطة. */
+    @Synchronized
+    fun markers(): List<MeterPoint> {
+        val out = ArrayList<MeterPoint>()
+        readableDatabase.rawQuery(
+            "SELECT $columns FROM meters WHERE lat IS NOT NULL AND lon IS NOT NULL", null
+        ).use { c ->
+            while (c.moveToNext()) RoundLogic.marker(item(c))?.let { out.add(it) }
+        }
+        return out
+    }
+
     /** وصول موثّق بصورة (لا يعني أن الفاتورة سُلِّمت). */
     @Synchronized
     fun markArrival(id: Long, recordId: String, flags: String, timeMs: Long) {

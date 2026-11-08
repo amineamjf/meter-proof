@@ -32,9 +32,13 @@ class TrackMapView(context: Context, private val interactive: Boolean = false) :
 
     var onPhotoTap: ((Int) -> Unit)? = null
 
+    /** الضغط على عداد من الجولة (دائرة ملوّنة بحالته). */
+    var onMeterTap: ((MeterPoint) -> Unit)? = null
+
     private var track: List<GeoPoint> = emptyList()
     private var photos: List<PhotoPoint> = emptyList()
     private var stops: List<Stop> = emptyList()
+    private var meters: List<MeterPoint> = emptyList()
     private var selected = -1
 
     private val density = resources.displayMetrics.density
@@ -120,7 +124,7 @@ class TrackMapView(context: Context, private val interactive: Boolean = false) :
                 return true
             }
 
-            override fun onSingleTapUp(e: MotionEvent): Boolean = tapPhoto(e.x, e.y)
+            override fun onSingleTapUp(e: MotionEvent): Boolean = tapPhoto(e.x, e.y) || tapMeter(e.x, e.y)
 
             override fun onDoubleTap(e: MotionEvent): Boolean {
                 if (!hasData) return false
@@ -131,10 +135,16 @@ class TrackMapView(context: Context, private val interactive: Boolean = false) :
         }
     )
 
-    fun setData(track: List<GeoPoint>, photos: List<PhotoPoint>, stops: List<Stop>) {
+    fun setData(
+        track: List<GeoPoint>,
+        photos: List<PhotoPoint>,
+        stops: List<Stop>,
+        meters: List<MeterPoint> = emptyList()
+    ) {
         this.track = track
         this.photos = photos
         this.stops = stops
+        this.meters = meters
         if (autoFit) needFit = true
         invalidate()
     }
@@ -226,6 +236,8 @@ class TrackMapView(context: Context, private val interactive: Boolean = false) :
         pts.addAll(track)
         for (p in photos) pts.add(GeoPoint(p.lat, p.lon))
         for (s in stops) if (!(s.lat == 0.0 && s.lon == 0.0)) pts.add(GeoPoint(s.lat, s.lon))
+        // لا مسار ولا صور ولا توقفات بعد: نعرض الجولة نفسها
+        if (pts.isEmpty()) for (m in meters) pts.add(GeoPoint(m.lat, m.lon))
         if (pts.isEmpty()) {
             hasData = false
             return
@@ -359,14 +371,14 @@ class TrackMapView(context: Context, private val interactive: Boolean = false) :
             needFit = false
         }
         if (!hasData) {
-            renderer.draw(canvas, w, h, track, photos, stops, selected)
+            renderer.draw(canvas, w, h, track, photos, stops, selected, null, meters)
             return
         }
         cxPx = TileMath.lonToX(centerLon, zoom, tilePx)
         cyPx = TileMath.latToY(centerLat, zoom, tilePx)
         canvas.drawColor(Color.parseColor("#F3F5F7"))
         drawTiles(canvas, w, h)
-        renderer.draw(canvas, w, h, track, photos, stops, selected, projector)
+        renderer.draw(canvas, w, h, track, photos, stops, selected, projector, meters)
         drawAttribution(canvas, w, h)
     }
 
@@ -387,6 +399,31 @@ class TrackMapView(context: Context, private val interactive: Boolean = false) :
         return best
     }
 
+    /** أقرب عداد من الجولة ضمن مدى اللمس، وإلا -1. */
+    private fun nearestMeter(x: Float, y: Float): Int {
+        var best = -1
+        var bestDist = 24f * density
+        val xs = renderer.meterX
+        val ys = renderer.meterY
+        for (i in meters.indices) {
+            if (i >= xs.size) break
+            val d = abs(xs[i] - x) + abs(ys[i] - y)
+            if (d < bestDist) {
+                bestDist = d
+                best = i
+            }
+        }
+        return best
+    }
+
+    private fun tapMeter(x: Float, y: Float): Boolean {
+        val best = nearestMeter(x, y)
+        if (best < 0) return false
+        onMeterTap?.invoke(meters[best])
+        performClick()
+        return true
+    }
+
     private fun tapPhoto(x: Float, y: Float): Boolean {
         val best = nearestPhoto(x, y)
         if (best < 0) return false
@@ -398,8 +435,10 @@ class TrackMapView(context: Context, private val interactive: Boolean = false) :
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (!interactive) {
             // عرض ثابت: الضغط على دائرة فقط، والتمرير يبقى للصفحة
-            if (event.action == MotionEvent.ACTION_DOWN) return photos.isNotEmpty()
-            if (event.action == MotionEvent.ACTION_UP && tapPhoto(event.x, event.y)) return true
+            if (event.action == MotionEvent.ACTION_DOWN) return photos.isNotEmpty() || meters.isNotEmpty()
+            if (event.action == MotionEvent.ACTION_UP &&
+                (tapPhoto(event.x, event.y) || tapMeter(event.x, event.y))
+            ) return true
             return super.onTouchEvent(event)
         }
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {

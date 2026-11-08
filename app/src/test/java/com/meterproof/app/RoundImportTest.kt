@@ -300,4 +300,38 @@ class RoundImportTest {
         assertEquals(30.0, RoundLogic.arrivalRadiusM(20f), 0.001)
         assertEquals(45.0, RoundLogic.arrivalRadiusM(100f), 0.001)
     }
+
+    // ---------------------------------------------------------------- عدادات الجولة على الخارطة
+
+    @Test
+    fun marker_is_null_without_coordinates() {
+        assertNull(RoundLogic.marker(item(1, "A", null, null)))
+    }
+
+    @Test
+    fun marker_state_follows_delivery_and_arrival() {
+        val base = item(1, "A", 34.0, -5.0)
+        assertEquals(MeterMarkState.PENDING, RoundLogic.marker(base)!!.state)
+        assertEquals(MeterMarkState.ARRIVED, RoundLogic.marker(base.copy(arrivalAt = 5L))!!.state)
+        assertEquals(MeterMarkState.DONE, RoundLogic.marker(base.copy(doneAt = 9L))!!.state)
+        assertEquals(
+            MeterMarkState.FLAGGED,
+            RoundLogic.marker(base.copy(doneAt = 9L, flags = "FAR_FROM_METER"))!!.state
+        )
+        // التسليم المسجَّل يغلب الوصول
+        assertEquals(MeterMarkState.DONE, RoundLogic.marker(base.copy(arrivalAt = 5L, doneAt = 9L))!!.state)
+    }
+
+    @Test
+    fun marker_links_photo_and_visit_time() {
+        val m = item(1, "A", 34.0, -5.0)
+            .copy(arrivalAt = 5L, arrivalRecord = "arr", doneAt = 9L, recordId = "done")
+        val p = RoundLogic.marker(m)!!
+        assertEquals("done", p.photoId)
+        assertEquals(9L, p.visitedAt)
+        val arrivedOnly = RoundLogic.marker(item(2, "B", 34.0, -5.0).copy(arrivalAt = 5L, arrivalRecord = "arr"))!!
+        assertEquals("arr", arrivedOnly.photoId)
+        assertEquals(5L, arrivedOnly.visitedAt)
+        assertNull(RoundLogic.marker(item(3, "C", 34.0, -5.0))!!.photoId)
+    }
 }

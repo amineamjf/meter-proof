@@ -42,6 +42,41 @@ data class RankedMeter(val item: MeterItem, val distanceM: Double?)
 
 object RoundLogic {
 
+    /** تحويل عداد إلى نقطة خارطة (null إن لم تكن له إحداثية). نقية وقابلة للاختبار. */
+    fun marker(m: MeterItem): MeterPoint? {
+        val lat = m.lat ?: return null
+        val lon = m.lon ?: return null
+        val far = m.flags.contains("FAR_FROM_METER")
+        val state = when {
+            m.done && far -> MeterMarkState.FLAGGED
+            m.done -> MeterMarkState.DONE
+            m.arrived -> MeterMarkState.ARRIVED
+            else -> MeterMarkState.PENDING
+        }
+        val stateText = when (state) {
+            MeterMarkState.FLAGGED -> "صُوِّر لكن الموقع بعيد عن الإحداثية"
+            MeterMarkState.DONE -> "صُوِّر"
+            MeterMarkState.ARRIVED -> "وُثّق الوصول، التسليم غير مؤكَّد بعد"
+            MeterMarkState.PENDING -> "لم يُسجَّل التسليم بعد"
+        }
+        val sb = StringBuilder()
+        if (CustomerInfo.SHOW && m.customerName.isNotEmpty()) sb.append(m.customerName).append("\n")
+        if (m.address.isNotEmpty()) sb.append(m.address).append("\n")
+        if (m.quartier.isNotEmpty()) sb.append("الحي: ").append(m.quartier).append("\n")
+        sb.append(stateText)
+        return MeterPoint(
+            id = m.id,
+            meterNo = m.meterNo,
+            title = "العداد " + m.meterNo,
+            detail = sb.toString(),
+            lat = lat,
+            lon = lon,
+            state = state,
+            photoId = m.recordId ?: m.arrivalRecord,
+            visitedAt = maxOf(m.doneAt, m.arrivalAt)
+        )
+    }
+
     /** نطاق الوصول: 25 مترًا، ويتسع حتى 45 مترًا عند ضعف دقة GPS. */
     fun arrivalRadiusM(accuracyM: Float): Double = maxOf(25.0, minOf(accuracyM * 1.5, 45.0))
 

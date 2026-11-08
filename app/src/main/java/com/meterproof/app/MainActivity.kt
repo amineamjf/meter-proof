@@ -6,6 +6,8 @@ import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
@@ -65,6 +67,8 @@ class MainActivity : Activity() {
     private var mapCount = -1
     private var mapTrackCount = -1
     private var mapEventCount = -1
+    private var mapTotals: RoundTotals? = null
+    private val roundDb by lazy { RoundDb(this) }
     private var dayOffset = 0
 
     private val uiHandler = Handler(Looper.getMainLooper())
@@ -81,6 +85,7 @@ class MainActivity : Activity() {
         const val REQ_EXPORT = 3
         const val REQ_SUMMARY = 4
         const val REQ_MAP_IMPORT = 5
+        const val HEADING_TAG = "heading"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -104,20 +109,81 @@ class MainActivity : Activity() {
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
+    // ألوان الواجهة (نفس لوحة شاشة الجولة)
+    private val cBg = Color.parseColor("#F3F5F8")
+    private val cInk = Color.parseColor("#1F2933")
+    private val cMuted = Color.parseColor("#667085")
+    private val cLine = Color.parseColor("#E4E7EC")
+    private val cAccent = Color.parseColor("#1D4ED8")
+
+    private fun rounded(fill: Int, radiusDp: Int, stroke: Int = 0): GradientDrawable =
+        GradientDrawable().apply {
+            setColor(fill)
+            cornerRadius = dp(radiusDp).toFloat()
+            if (stroke != 0) setStroke(dp(1), stroke)
+        }
+
+    /** عنوان قسم (bold، يبدأ بطاقة جديدة في groupIntoCards) أو نص شرح مصغّر. */
     private fun label(text: String, bold: Boolean = false): TextView {
         return TextView(this).apply {
             this.text = text
-            textSize = if (bold) 17f else 15f
-            if (bold) setTypeface(typeface, Typeface.BOLD)
-            setPadding(0, dp(10), 0, dp(4))
+            if (bold) {
+                textSize = 16f
+                setTypeface(typeface, Typeface.BOLD)
+                setTextColor(cInk)
+                tag = HEADING_TAG
+                setPadding(0, dp(2), 0, dp(6))
+            } else {
+                textSize = 13f
+                setTextColor(cMuted)
+                setPadding(0, dp(6), 0, dp(2))
+            }
         }
     }
 
     private fun button(text: String, onClick: () -> Unit): Button {
         return Button(this).apply {
             this.text = text
+            isAllCaps = false
+            textSize = 14f
+            setTextColor(Color.WHITE)
+            background = rounded(cAccent, 12)
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(6) }
             setOnClickListener { onClick() }
         }
+    }
+
+    /**
+     * يجمع عناصر الشاشة في بطاقات: كل عنوان قسم (bold) يبدأ بطاقة بيضاء مستديرة تضم ما بعده
+     * حتى العنوان التالي. لا يغيّر أي عنصر ولا سلوكه، الشكل فقط.
+     */
+    private fun groupIntoCards(col: LinearLayout): LinearLayout {
+        val kids = ArrayList<View>()
+        for (i in 0 until col.childCount) kids.add(col.getChildAt(i))
+        col.removeAllViews()
+        col.setBackgroundColor(cBg)
+        var card: LinearLayout? = null
+        for (v in kids) {
+            if (v.tag == HEADING_TAG) {
+                val c = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    background = rounded(Color.WHITE, 14, cLine)
+                    setPadding(dp(14), dp(12), dp(14), dp(14))
+                }
+                col.addView(
+                    c,
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                    ).apply { topMargin = dp(10) }
+                )
+                card = c
+            }
+            (card ?: col).addView(v)
+        }
+        return col
     }
 
     private fun numberField(value: Int): EditText {
@@ -192,12 +258,13 @@ class MainActivity : Activity() {
         col.addView(nav)
 
         col.addView(label("5) الخارطة والتصدير", true))
-        col.addView(label("المسار الأزرق: GPS، الدوائر الحمراء: الصور (اضغط دائرة لعرض صورتها)، المربعات البرتقالية: توقفات"))
+        col.addView(label("المسار الأزرق: GPS، الدوائر الحمراء: الصور (اضغط دائرة لعرض صورتها)، المربعات البرتقالية: توقفات، الدوائر الملوّنة الصغيرة: عدادات الجولة بحسب حالتها (اضغط عدادًا لتفاصيله)"))
         mapView = TrackMapView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(300)
             )
             onPhotoTap = { index -> showImage(index) }
+            onMeterTap = { m -> MeterDialog.show(this@MainActivity, m, store) { idx -> showImage(idx) } }
         }
         col.addView(mapView)
         col.addView(button("فتح الخارطة بملء الشاشة (تحريك وتكبير)") {
@@ -259,7 +326,10 @@ class MainActivity : Activity() {
         col.addView(privacyButton)
         updatePrivacyText()
 
-        setContentView(ScrollView(this).apply { addView(col) })
+        setContentView(ScrollView(this).apply {
+            setBackgroundColor(cBg)
+            addView(groupIntoCards(col))
+        })
     }
 
     private fun togglePrivacy() {
@@ -329,11 +399,24 @@ class MainActivity : Activity() {
 
         val trackCount = store.trackPointCount()
         val eventCount = store.events().size
-        if (count != mapCount || trackCount != mapTrackCount || eventCount != mapEventCount) {
+        val totals = try {
+            roundDb.totals()
+        } catch (e: Exception) {
+            null
+        }
+        if (count != mapCount || trackCount != mapTrackCount || eventCount != mapEventCount ||
+            totals != mapTotals
+        ) {
             mapCount = count
             mapTrackCount = trackCount
             mapEventCount = eventCount
-            mapView.setData(store.trackPoints(), store.photoPoints(), StopPairing.pair(store.events()))
+            mapTotals = totals
+            val meters = try {
+                roundDb.markers()
+            } catch (e: Exception) {
+                emptyList()
+            }
+            mapView.setData(store.trackPoints(), store.photoPoints(), StopPairing.pair(store.events()), meters)
             mapView.setSelected(imageIndex)
             renderSummary()
         }
@@ -613,7 +696,8 @@ class MainActivity : Activity() {
             file.writeText(
                 MapHtml.build(
                     store.trackPoints(), store.photoPoints(),
-                    StopPairing.pair(store.events()), withImages = false
+                    StopPairing.pair(store.events()), withImages = false,
+                    meters = try { roundDb.markers() } catch (e: Exception) { emptyList() }
                 ),
                 Charsets.UTF_8
             )

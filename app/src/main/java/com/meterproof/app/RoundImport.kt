@@ -8,8 +8,9 @@ import java.util.zip.ZipInputStream
 /**
  * استيراد جولة العدادات من ملف Excel (xlsx) أو CSV. منطق نقي (بلا اعتماد على أندرويد) لتسهيل الاختبار.
  *
- * مبدأ تقليل البيانات: لا نقرأ إلا الحقول اللازمة (رقم العداد، العقد، العنوان، الإحداثية، آخر فهرس).
- * أسماء الزبائن وبقية الأعمدة لا تُنقل إلى الهاتف.
+ * نسخة التجربة (redesign): تُقرأ أيضًا بيانات الزبون (الاسم، الفهرس الجديد) لعرضها في البطاقة.
+ * مفتاح الإخفاء الواحد هو [CustomerInfo.SHOW] في RoundLogic.kt: عند false لا يُقرأ الاسم من الملف
+ * ولا يُعرض، وتبقى بقية الأعمدة كما كانت.
  */
 
 /** صف عداد بعد الاستيراد. */
@@ -20,7 +21,9 @@ data class MeterRow(
     val quartier: String,
     val lat: Double?,
     val lon: Double?,
-    val oldIndex: Long?
+    val oldIndex: Long?,
+    val customerName: String = "",
+    val newIndex: Long? = null
 )
 
 data class ImportResult(
@@ -201,7 +204,9 @@ data class RoundColumns(
     val gps: Int,
     val contract: Int,
     val oldIndex: Int,
-    val quartier: Int
+    val quartier: Int,
+    val customerName: Int = -1,
+    val newIndex: Int = -1
 ) {
     companion object {
         private val METER = setOf(
@@ -217,6 +222,14 @@ data class RoundColumns(
             "ancienindex", "ancienneindex", "indexancien", "dernierindex", "indexprecedent"
         )
         private val QUARTIER = setOf("quartier", "secteur", "zone")
+        private val NAME = setOf(
+            "nom", "clientnom", "nomclient", "nomabonne", "client", "abonne", "titulaire", "nomprenom",
+            "nometprenom", "customer", "customername", "name", "الاسم", "اسمالزبون", "الزبون"
+        )
+        private val NEW_INDEX = setOf(
+            "nouvelindex", "nouveauindex", "indexnouveau", "indexactuel", "nouvindex",
+            "newindex", "indexnouvel", "indexreleve"
+        )
 
         /** يوحّد العنوان: بلا حركات ولا رموز ولا فراغات، بأحرف صغيرة. */
         fun norm(s: String): String {
@@ -237,7 +250,9 @@ data class RoundColumns(
                 gps = find(GPS),
                 contract = find(CONTRACT),
                 oldIndex = find(OLD_INDEX),
-                quartier = find(QUARTIER)
+                quartier = find(QUARTIER),
+                customerName = if (CustomerInfo.SHOW) find(NAME) else -1,
+                newIndex = find(NEW_INDEX)
             )
         }
     }
@@ -334,7 +349,9 @@ object RoundImport {
                     quartier = quartier,
                     lat = gps?.first,
                     lon = gps?.second,
-                    oldIndex = cell(row, cols.oldIndex).toDoubleOrNull()?.toLong()
+                    oldIndex = cell(row, cols.oldIndex).toDoubleOrNull()?.toLong(),
+                    customerName = cell(row, cols.customerName),
+                    newIndex = cell(row, cols.newIndex).toDoubleOrNull()?.toLong()
                 )
             )
         }

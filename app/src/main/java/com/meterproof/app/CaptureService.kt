@@ -67,6 +67,7 @@ class CaptureService : LifecycleService() {
         private const val EXTRA_ELAPSED = "elapsed"
         private const val EXTRA_MOCK = "mock"
 
+        private const val RETRY_WHILE_WALKING_MS = 15_000L
         private const val CHANNEL_ID = "meterproof_session"
         private const val NOTIF_ID = 1001
 
@@ -156,6 +157,8 @@ class CaptureService : LifecycleService() {
     private var tracking = false
     private lateinit var tracker: MotionTracker
     private var motionSensor: MotionSensor? = null
+    /** هل يمشي العامل الآن (من مقياس التسارع)؟ التصوير العشوائي لا يعمل أثناء المشي. */
+    @Volatile private var walking = false
     private val clockWatch = ClockWatch()
     private var clockJumped = false
     private var lastFixMock = false
@@ -187,8 +190,27 @@ class CaptureService : LifecycleService() {
                     // تجاهل
                 }
             }
-            if (settings.photoOnStop && settings.active && !settings.paused && inWorkHours()) {
-                mainHandler.post { capture("stop") }
+            if (settings.active && !settings.paused && inWorkHours()) {
+                // توقف قرب إحداثية عداد في الجولة: صورة وصول مربوطة بذلك العداد (لا تعني تسليم الفاتورة)
+                executor.execute {
+                    val arrival = try {
+                        findArrival(fix)
+                    } catch (e: Exception) {
+                        null
+                    }
+                    mainHandler.post {
+                        if (arrival != null) {
+                            if (!capturing) {
+                                captureMeterId = arrival.meter.id
+                                captureLocation = lastLocation
+                                captureExtraFlags = if (arrival.ambiguous) setOf("MULTI_NEAR") else emptySet()
+                                capture("arrival")
+                            }
+                        } else if (settings.photoOnStop) {
+                            capture("stop")
+                        }
+                    }
+                }
             }
         }
 
@@ -404,10 +426,25 @@ class CaptureService : LifecycleService() {
             scheduleNext()
             return
         }
+        if (walking) {
+            // أثناء المشي لا نصوّر: نعيد المحاولة بعد 15 ثانية حتى يقف العامل أو يهدأ
+            val at = System.currentTimeMillis() + RETRY_WHILE_WALKING_MS
+            settings.nextCaptureAt = at
+            getSystemService(AlarmManager::class.java)
+                .setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, alarmIntent())
+            return
+        }
         capture("auto")
     }
 
     // ---------------------------------------------------------------- التصوير
+
+    private fun findArrival(fix: MotionTracker.Fix): Arrival? {
+        val dLat = 60.0 / 111_320.0
+        val dLon = dLat / maxOf(0.2, Math.cos(Math.toRadians(fix.lat)))
+        val items = roundDb.nearby(fix.lat - dLat, fix.lat + dLat, fix.lon - dLon, fix.lon + dLon)
+        return RoundLogic.pickArrival(items, fix.lat, fix.lon, fix.acc)
+    }
 
     private fun capture(mode: String) {
         if (capturing) return
@@ -477,10 +514,14 @@ class CaptureService : LifecycleService() {
                         val recordId = store.addRecord(jpeg, mode, loc, flags, meter?.meterNo ?: "")
                         logDelivery(recordId, mode, loc)
                         if (meter != null) {
-                            roundDb.markDone(meter.id, recordId, flags, System.currentTimeMillis())
-                            // عداد بلا إحداثية: نتعلّمها من أول صورة دقيقة التُقطت عنده
-                            if (!meter.hasGps && loc != null && loc.accuracy <= 30f) {
-                                roundDb.learn(meter.id, loc.latitude, loc.longitude)
+                            if (mode == "arrival") {
+                                roundDb.markArrival(meter.id, recordId, flags, System.currentTimeMillis())
+                            } else {
+                                roundDb.markDone(meter.id, recordId, flags, System.currentTimeMillis())
+                                // عداد بلا إحداثية: نتعلّمها من أول صورة دقيقة التُقطت عنده
+                                if (!meter.hasGps && loc != null && loc.accuracy <= 30f) {
+                                    roundDb.learn(meter.id, loc.latitude, loc.longitude)
+                                }
                             }
                         }
                     } catch (e: Exception) {
@@ -733,6 +774,7 @@ class CaptureService : LifecycleService() {
     private fun startMotionSensor() {
         if (motionSensor == null) {
             motionSensor = MotionSensor(this, mainHandler) { t, moving ->
+                walking = moving
                 if (tracking) tracker.onMotion(t, moving)
             }
         }
@@ -741,6 +783,7 @@ class CaptureService : LifecycleService() {
 
     private fun stopMotionSensor() {
         motionSensor?.stop()
+        walking = false
     }
 
     // ---------------------------------------------------------------- مؤشرات التلاعب والأحداث

@@ -23,7 +23,7 @@
 
     <application
         android:allowBackup="false"
-        android:label="MeterProof"
+        android:label="MeterProof v2"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
 
@@ -39,7 +39,7 @@
         <activity
             android:name=".RoundActivity"
             android:exported="false"
-            android:label="جولة العدادات" />
+            android:label="جولة التوزيع" />
 
         <activity
             android:name=".DeliveryActivity"

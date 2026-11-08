@@ -115,12 +115,29 @@ class RoundImportTest {
     }
 
     @Test
-    fun customer_names_are_not_carried_into_rows() {
+    fun customer_name_and_new_index_are_read_in_experiment_build() {
         val res = RoundImport.parseFile(
             buildXlsx(listOf(row("A1", "RUE 1 QUARTIER X", "34.1, -5.1")))
         )
-        val text = res.meters.joinToString { it.toString() }
-        assertTrue(!text.contains("CLIENT TEST"))
+        val m = res.meters[0]
+        if (CustomerInfo.SHOW) {
+            assertEquals("CLIENT TEST", m.customerName)
+        } else {
+            // عند إخفاء بيانات الزبون لا يُنقل الاسم إلى الهاتف إطلاقًا
+            assertEquals("", m.customerName)
+        }
+        assertEquals(499L, m.oldIndex)
+        assertEquals(505L, m.newIndex)
+    }
+
+    @Test
+    fun customer_name_header_aliases_are_detected() {
+        val aliases = listOf("Client / Nom", "Nom Client", "Abonné", "Titulaire", "Nom")
+        for (h in aliases) {
+            val cols = RoundColumns.detect(listOf("N° Compteur", "Adresse", h))
+            if (CustomerInfo.SHOW) assertEquals("alias: $h", 2, cols.customerName)
+        }
+        assertEquals(3, RoundColumns.detect(listOf("N° Compteur", "Adresse", "x", "Nouvel index")).newIndex)
     }
 
     @Test
@@ -208,7 +225,7 @@ class RoundImportTest {
     // ---------------------------------------------------------------- الأقرب أولًا
 
     private fun item(id: Long, address: String, lat: Double?, lon: Double?) = MeterItem(
-        id, "M$id", "", address, "Q", lat, lon, null, false, 0L, null, ""
+        id, "M$id", "", address, "Q", lat, lon, null, "", null, false, 0L, null, ""
     )
 
     @Test
@@ -238,5 +255,49 @@ class RoundImportTest {
     fun near_limit_grows_with_poor_accuracy() {
         assertEquals(50.0, RoundLogic.nearLimitM(10f), 0.001)
         assertEquals(90.0, RoundLogic.nearLimitM(60f), 0.001)
+    }
+
+    // ---------------------------------------------------------------- وصول موثّق عند التوقف قرب عداد
+
+    @Test
+    fun arrival_picks_nearest_meter_within_radius() {
+        val base = 34.0
+        val items = listOf(
+            item(1, "A", base + 10.0 / 111_320.0, -5.0),
+            item(2, "B", base + 40.0 / 111_320.0, -5.0)
+        )
+        val a = RoundLogic.pickArrival(items, base, -5.0, 10f)!!
+        assertEquals(1L, a.meter.id)
+        assertTrue(!a.ambiguous)
+    }
+
+    @Test
+    fun arrival_is_ambiguous_when_two_meters_are_equally_close() {
+        val base = 34.0
+        val items = listOf(
+            item(1, "A", base + 10.0 / 111_320.0, -5.0),
+            item(2, "B", base + 15.0 / 111_320.0, -5.0)
+        )
+        assertTrue(RoundLogic.pickArrival(items, base, -5.0, 10f)!!.ambiguous)
+    }
+
+    @Test
+    fun arrival_ignores_far_done_arrived_and_gpsless_meters() {
+        val base = 34.0
+        val near = base + 5.0 / 111_320.0
+        val items = listOf(
+            item(1, "far", base + 100.0 / 111_320.0, -5.0),
+            item(2, "done", near, -5.0).copy(doneAt = 5L),
+            item(3, "arrived", near, -5.0).copy(arrivalAt = 5L),
+            item(4, "nogps", null, null)
+        )
+        assertNull(RoundLogic.pickArrival(items, base, -5.0, 10f))
+    }
+
+    @Test
+    fun arrival_radius_grows_with_poor_accuracy_but_is_capped() {
+        assertEquals(25.0, RoundLogic.arrivalRadiusM(10f), 0.001)
+        assertEquals(30.0, RoundLogic.arrivalRadiusM(20f), 0.001)
+        assertEquals(45.0, RoundLogic.arrivalRadiusM(100f), 0.001)
     }
 }

@@ -1,5 +1,13 @@
 package com.meterproof.app
 
+/**
+ * مفتاح واحد لإظهار بيانات الزبون (الاسم) في نسخة التجربة.
+ * اجعله false عندما ينضج التطبيق: لا يُقرأ الاسم من الملف ولا يُعرض في البطاقات.
+ */
+object CustomerInfo {
+    const val SHOW = true
+}
+
 /** عداد في الجولة كما هو مخزن على الهاتف. */
 data class MeterItem(
     val id: Long,
@@ -10,19 +18,48 @@ data class MeterItem(
     val lat: Double?,
     val lon: Double?,
     val oldIndex: Long?,
+    val customerName: String,
+    val newIndex: Long?,
     val learned: Boolean,
     val doneAt: Long,
     val recordId: String?,
-    val flags: String
+    val flags: String,
+    // وصول موثّق بصورة عند التوقف قرب إحداثية العداد. لا يعني أن الفاتورة سُلِّمت.
+    val arrivalAt: Long = 0L,
+    val arrivalRecord: String? = null,
+    val arrivalFlags: String = ""
 ) {
     val done: Boolean get() = doneAt > 0
+    val arrived: Boolean get() = arrivalAt > 0
     val hasGps: Boolean get() = lat != null && lon != null
 }
+
+/** نتيجة اختيار عداد الوصول: الأقرب، وهل يوجد عداد آخر قريب منه بما يسبب التباسًا. */
+data class Arrival(val meter: MeterItem, val distanceM: Double, val ambiguous: Boolean)
 
 /** عداد مع مسافته عن العامل (null إن لم نعرف إحداثيته أو موقع العامل). */
 data class RankedMeter(val item: MeterItem, val distanceM: Double?)
 
 object RoundLogic {
+
+    /** نطاق الوصول: 25 مترًا، ويتسع حتى 45 مترًا عند ضعف دقة GPS. */
+    fun arrivalRadiusM(accuracyM: Float): Double = maxOf(25.0, minOf(accuracyM * 1.5, 45.0))
+
+    /**
+     * أقرب عداد بإحداثية لم يُسلَّم ولم يُوثَّق وصوله، ضمن نطاق الوصول. null إن لم يوجد.
+     * ambiguous: يوجد عداد آخر فرق مسافته عن الأول أقل من 10 أمتار (مبنى كثيف).
+     */
+    fun pickArrival(items: List<MeterItem>, lat: Double, lon: Double, accuracyM: Float): Arrival? {
+        val radius = arrivalRadiusM(accuracyM)
+        val near = items
+            .filter { it.hasGps && !it.done && !it.arrived }
+            .map { it to Geo.distanceM(lat, lon, it.lat!!, it.lon!!) }
+            .filter { it.second <= radius }
+            .sortedBy { it.second }
+        if (near.isEmpty()) return null
+        val ambiguous = near.size > 1 && near[1].second - near[0].second < 10.0
+        return Arrival(near[0].first, near[0].second, ambiguous)
+    }
 
     /** نطاق اعتبار الصورة قريبة من العداد: 50 مترًا على الأقل، أو أكثر عند ضعف دقة GPS. */
     fun nearLimitM(accuracyM: Float): Double = maxOf(50.0, accuracyM * 1.5)

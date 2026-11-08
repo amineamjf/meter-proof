@@ -35,6 +35,20 @@ class Settings(context: Context) {
         get() = sp.getBoolean("active", false)
         set(v) = sp.edit().putBoolean("active", v).apply()
 
+    /** هل عملت الجلسة الحالية داخل ساعات الدوام (يُحفظ كي يصمد عبر إعادة تشغيل الخدمة) */
+    var workedThisSession: Boolean
+        get() = sp.getBoolean("workedSession", false)
+        set(v) = sp.edit().putBoolean("workedSession", v).apply()
+
+    /** سبب آخر إيقاف للجلسة للعرض: فارغ = يدوي، AUTO_END_OF_HOURS = عند نهاية الدوام */
+    var lastStopReason: String
+        get() = sp.getString("lastStopReason", "") ?: ""
+        set(v) = sp.edit().putString("lastStopReason", v).apply()
+
+    var lastStopAt: Long
+        get() = sp.getLong("lastStopAt", 0L)
+        set(v) = sp.edit().putLong("lastStopAt", v).apply()
+
     /** إيقاف مؤقت (استراحة/صلاة): لا تصوير ما دام مفعّلًا */
     var paused: Boolean
         get() = sp.getBoolean("paused", false)

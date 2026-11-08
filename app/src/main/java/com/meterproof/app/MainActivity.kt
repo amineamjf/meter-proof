@@ -264,6 +264,10 @@ class MainActivity : Activity() {
         sb.append("الجلسة: ").append(if (settings.active) "🟢 نشطة" else "⚪ متوقفة")
         if (settings.paused) sb.append(" (إيقاف مؤقت)")
         sb.append("\n")
+        if (!settings.active && settings.lastStopReason == "AUTO_END_OF_HOURS" && settings.lastStopAt > 0) {
+            sb.append("انتهت الجلسة تلقائيًا عند نهاية الدوام: ")
+                .append(timeFormat.format(Date(settings.lastStopAt))).append("\n")
+        }
         sb.append("التتبع: ").append(motionStateText()).append("\n")
         sb.append("عدد الصور المحفوظة: ").append(store.count()).append("\n")
         sb.append("نقاط المسار: ").append(store.trackPointCount()).append("\n")
@@ -391,6 +395,11 @@ class MainActivity : Activity() {
         }
         if (s !in 0..23 || e !in 1..24) {
             toast("بداية الدوام من 0 إلى 23، ونهايته من 1 إلى 24")
+            return false
+        }
+        if (s == e) {
+            // مدة صفرية: لا تدخل الجلسة الدوام أبدًا فلا تنتهي تلقائيًا
+            toast("بداية الدوام ونهايته لا يمكن أن تكونا الساعة نفسها")
             return false
         }
         val stopS = stopField.text.toString().toIntOrNull()

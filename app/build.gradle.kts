@@ -11,8 +11,21 @@ android {
         applicationId = "com.meterproof.app"
         minSdk = 28
         targetSdk = 34
-        versionCode = 1
+        // يزداد مع كل تشغيل على GitHub كي لا يُرفض التحديث كأنه «نسخة أقدم»؛ محليًا 1
+        versionCode = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
         versionName = "0.1.0"
+    }
+
+    signingConfigs {
+        // مفتاح تصحيح ثابت داخل المستودع: بدونه يُنشئ كل تشغيل على GitHub مفتاحًا عشوائيًا جديدًا،
+        // فيرفض أندرويد تثبيت النسخة الجديدة فوق القديمة («التطبيق غير مثبّت»).
+        // ليس سرًّا (كلمة سره android) وليس لنسخة إصدار عامة.
+        getByName("debug") {
+            storeFile = file("debug-shared.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
 
     buildTypes {

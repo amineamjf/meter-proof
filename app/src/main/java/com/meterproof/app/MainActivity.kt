@@ -54,6 +54,10 @@ class MainActivity : Activity() {
     private lateinit var photoOnStopButton: Button
     private lateinit var dayLabel: TextView
     private lateinit var summaryView: TextView
+    private lateinit var mapPackView: TextView
+
+    @Volatile private var importNote: String? = null
+    private var importing = false
 
     private var imageIndex = -1
     private var shownCount = -1
@@ -75,6 +79,7 @@ class MainActivity : Activity() {
     private companion object {
         const val REQ_EXPORT = 3
         const val REQ_SUMMARY = 4
+        const val REQ_MAP_IMPORT = 5
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -194,7 +199,17 @@ class MainActivity : Activity() {
             onPhotoTap = { index -> showImage(index) }
         }
         col.addView(mapView)
-        col.addView(button("فتح الخارطة الحقيقية في المتصفح") { openMapInBrowser() })
+        col.addView(button("فتح الخارطة بملء الشاشة (تحريك وتكبير)") {
+            startActivity(Intent(this, MapActivity::class.java))
+        })
+        mapPackView = TextView(this).apply {
+            textSize = 13f
+            setPadding(0, dp(8), 0, dp(4))
+        }
+        col.addView(mapPackView)
+        col.addView(button("استيراد ملف خارطة محلية (MBTiles)") { pickMapFile() })
+        col.addView(button("حذف الخارطة المحلية") { confirmDeleteMap() })
+        col.addView(button("فتح خارطة الإنترنت في المتصفح (احتياطي)") { openMapInBrowser() })
         exportButton = button("تصدير الصور والسجلات إلى التنزيلات") { doExport() }
         col.addView(exportButton)
 
@@ -284,6 +299,7 @@ class MainActivity : Activity() {
         statusView.text = sb.toString()
 
         pauseButton.text = if (settings.paused) "استئناف التصوير" else "إيقاف مؤقت"
+        mapPackView.text = importNote ?: MapPack.describe(this)
 
         val count = store.count()
         if (count != shownCount) {
@@ -493,6 +509,81 @@ class MainActivity : Activity() {
                 toast(result.message)
             }
         }.start()
+    }
+
+    private fun pickMapFile() {
+        if (importing) {
+            toast("جارٍ استيراد ملف، انتظر حتى ينتهي")
+            return
+        }
+        val pick = Intent(Intent.ACTION_OPEN_DOCUMENT)
+            .addCategory(Intent.CATEGORY_OPENABLE)
+            .setType("*/*")
+        try {
+            startActivityForResult(pick, REQ_MAP_IMPORT)
+        } catch (e: Exception) {
+            toast("لا يوجد تطبيق ملفات لاختيار الملف")
+        }
+    }
+
+    @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQ_MAP_IMPORT || resultCode != RESULT_OK) return
+        val uri = data?.data ?: return
+        try {
+            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        } catch (e: Exception) {
+            // الإذن المؤقت يكفي لنسخ فوري
+        }
+        startMapImport(uri)
+    }
+
+    /** ينسخ الملف إلى مساحة التطبيق على خيط خلفي ثم يحدّث الخارطة. لا يمسّ الخارطة السابقة إن فشل. */
+    private fun startMapImport(uri: Uri) {
+        importing = true
+        importNote = "جارٍ نسخ الخارطة... لا تُغلق التطبيق"
+        mapPackView.text = importNote
+        val mb = 1024L * 1024L
+        Thread {
+            val result = MapPack.importFrom(this, uri) { done, total ->
+                val note = if (total > 0) {
+                    "جارٍ النسخ: ${done * 100 / total}% (${done / mb} من ${total / mb} ميغابايت)"
+                } else {
+                    "جارٍ النسخ: ${done / mb} ميغابايت"
+                }
+                importNote = note
+                runOnUiThread { mapPackView.text = note }
+            }
+            runOnUiThread {
+                importing = false
+                importNote = null
+                when (result) {
+                    is MapPack.Result.Ok -> {
+                        toast("تم استيراد الخارطة. يمكنك حذف الملف الأصلي لتوفير المساحة")
+                        mapView.reloadTiles()
+                    }
+                    is MapPack.Result.Fail -> toast("تعذّر الاستيراد: ${result.message}")
+                }
+                mapPackView.text = MapPack.describe(this)
+            }
+        }.start()
+    }
+
+    private fun confirmDeleteMap() {
+        if (!MapPack.exists(this)) {
+            toast("لا توجد خارطة محلية")
+            return
+        }
+        android.app.AlertDialog.Builder(this)
+            .setMessage("حذف الخارطة المحلية؟ يمكنك استيرادها من جديد من الملف الأصلي.")
+            .setPositiveButton("حذف") { _, _ ->
+                MapPack.delete(this)
+                mapView.reloadTiles()
+                mapPackView.text = MapPack.describe(this)
+            }
+            .setNegativeButton("إلغاء", null)
+            .show()
     }
 
     private fun openMapInBrowser() {

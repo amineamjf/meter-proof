@@ -46,6 +46,11 @@
             android:exported="false"
             android:label="كشف تسليم الفواتير" />
 
+        <activity
+            android:name=".MapActivity"
+            android:exported="false"
+            android:label="الخارطة" />
+
         <service
             android:name=".CaptureService"
             android:exported="false"

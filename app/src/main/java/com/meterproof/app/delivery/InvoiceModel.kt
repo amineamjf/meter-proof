@@ -148,8 +148,10 @@ object InvoiceTrainer {
         }
         val accept: Double = found
 
+        // الاستدعاء يتناقص مع ارتفاع العتبة، فأعلى عتبة تحقق الهدف هي المقصودة. المرور التصاعدي
+        // كان يتوقف عند أدنى درجة (استدعاء 100% دائمًا) فيصبح كل شيء «غير مؤكد».
         var uncertain: Double = accept
-        for (th in candidates) {
+        for (th in candidates.asReversed()) {
             if (recallAt(th) >= cfg.targetRecall) {
                 uncertain = min(th, accept)
                 break

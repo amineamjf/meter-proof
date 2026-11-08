@@ -51,6 +51,9 @@ class InvoiceModelTest {
         assertTrue(m.metrics.precision >= 0.95f)
         assertTrue(m.metrics.recall >= 0.8f)
         assertTrue(m.uncertainThreshold <= m.acceptThreshold)
+        // حماية من عيب سابق: المرور التصاعدي كان يعطي عتبة قرابة الصفر فيصير كل شيء «غير مؤكد»
+        assertTrue("unc=${m.uncertainThreshold}", m.uncertainThreshold > 0.05f)
+        assertTrue(m.metrics.uncertainRecall >= 0.9f)
         assertEquals(20, m.positives)
         assertEquals(20, m.negatives)
 

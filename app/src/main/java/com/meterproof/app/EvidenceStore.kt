@@ -35,7 +35,7 @@ class EvidenceStore(context: Context) {
          * flags اختياري: إن كان فارغًا تبقى الصيغة القديمة كما هي حرفيًا،
          * فتبقى كل السجلات السابقة قابلة للتحقق دون أي تغيير.
          */
-        private fun recordHash(
+        internal fun recordHash(
             id: String, t: String, lat: String, lon: String, acc: String,
             mode: String, sha: String, prev: String, flags: String = "", meter: String = ""
         ): String {
@@ -46,7 +46,7 @@ class EvidenceStore(context: Context) {
             return sha256(parts.joinToString("|").toByteArray(Charsets.UTF_8))
         }
 
-        private fun eventHash(
+        internal fun eventHash(
             id: String, type: String, t: String, lat: String, lon: String,
             acc: String, detail: String, prev: String
         ): String {

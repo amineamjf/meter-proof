@@ -266,7 +266,7 @@ class MainActivity : Activity() {
             sb.append("الصورة التالية تقريبًا: ").append(timeFormat.format(Date(next))).append("\n")
         }
         if (settings.discardedCount > 0) {
-            sb.append("صور أُتلفت لفشل التشويه: ").append(settings.discardedCount).append("\n")
+            sb.append("صور أُتلفت لأسباب الخصوصية: ").append(settings.discardedCount).append("\n")
         }
         if (settings.lastError.isNotEmpty()) {
             sb.append("⚠ آخر خطأ: ").append(settings.lastError).append("\n")

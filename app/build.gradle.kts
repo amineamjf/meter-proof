@@ -46,6 +46,10 @@ dependencies {
     implementation("com.google.mlkit:face-detection:16.1.6")
     implementation("com.google.android.gms:play-services-tasks:18.2.0")
 
+    // كشف الأشخاص على الجهاز (تقسيم الأشخاص). النموذج مضمّن في التطبيق (نحو 4.5 ميغابايت) ويعمل دون إنترنت.
+    // الإصدار تجريبي (beta) بلا اتفاقية خدمة، لذلك يقع خلف واجهة HazardDetector ويمكن استبداله.
+    implementation("com.google.mlkit:segmentation-selfie:16.0.0-beta6")
+
     // اختبارات الوحدة للمنطق النقي (التوقف والحركة وملخص اليوم)
     testImplementation("junit:junit:4.13.2")
 }

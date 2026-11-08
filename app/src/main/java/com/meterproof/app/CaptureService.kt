@@ -29,6 +29,8 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
+import com.meterproof.app.privacy.GateEventLog
+import com.meterproof.app.privacy.PrivacyGate
 import java.io.ByteArrayOutputStream
 import java.util.Calendar
 import java.util.concurrent.Executors
@@ -108,6 +110,9 @@ class CaptureService : LifecycleService() {
     @Volatile private var captureMeterId = -1L
     @Volatile private var captureLocation: Location? = null
     @Volatile private var captureExtraFlags: Set<String> = emptySet()
+
+    /** سبب إتلاف الصورة الحالية (يُسجَّل حدثًا بلا صورة). null إن لم تُتلف. */
+    @Volatile private var discardDetail: String? = null
     private val roundDb by lazy { RoundDb(this) }
 
     private var cameraProvider: ProcessCameraProvider? = null
@@ -410,9 +415,10 @@ class CaptureService : LifecycleService() {
             override fun onCaptureSuccess(image: ImageProxy) {
                 var jpeg: ByteArray? = null
                 try {
-                    jpeg = processImage(image)
+                    jpeg = processImage(image, mode)
                 } catch (e: Throwable) {
                     settings.lastError = "فشل معالجة الصورة: ${e.javaClass.simpleName}"
+                    discardDetail = GateEventLog.discardDetail(mode, listOf("PROCESS_FAILED"), 0L)
                 } finally {
                     image.close()
                 }
@@ -442,6 +448,8 @@ class CaptureService : LifecycleService() {
                     } catch (e: Exception) {
                         settings.lastError = "فشل الحفظ: ${e.javaClass.simpleName}"
                     }
+                } else {
+                    logDiscard()
                 }
                 mainHandler.post {
                     releaseCamera()
@@ -460,9 +468,14 @@ class CaptureService : LifecycleService() {
     }
 
     /**
-     * الصورة الأصلية تبقى في الذاكرة فقط. إن فشل التشويه تُتلف ولا يُكتب شيء.
+     * الصورة الأصلية تبقى في الذاكرة فقط ولا تُكتب أبدًا.
+     *
+     * - كل الصور (مجدولة، توقف، تجريبية) تمر على بوابة الخصوصية: إما صورة مجرّدة،
+     *   أو لا صورة (null) ويُسجَّل حدث الإتلاف.
+     * - استثناء مؤقت: صور وضع الجرد (meter) تبقى على المرشح القديم (طمس الوجوه) حتى المرحلة 5،
+     *   وتُوسم بعلامة PRIVACY_LEGACY داخل السجل المبصوم.
      */
-    private fun processImage(image: ImageProxy): ByteArray? {
+    private fun processImage(image: ImageProxy, mode: String): ByteArray? {
         val raw = image.toBitmap()
         val rotation = image.imageInfo.rotationDegrees
         val oriented = if (rotation != 0) {
@@ -472,16 +485,44 @@ class CaptureService : LifecycleService() {
             raw
         }
 
-        val safe = PrivacyFilter.process(oriented)
-        if (safe == null) {
-            settings.discardedCount = settings.discardedCount + 1
-            settings.lastError = "فشل التشويه: أُتلفت الصورة ولم تُحفظ"
-            return null
+        if (mode == "meter") {
+            val safe = PrivacyFilter.process(oriented)
+            if (safe == null) {
+                settings.discardedCount = settings.discardedCount + 1
+                settings.lastError = "فشل التشويه: أُتلفت الصورة ولم تُحفظ"
+                discardDetail = GateEventLog.discardDetail(mode, listOf("FILTER_FAILED"), 0L)
+                return null
+            }
+            captureExtraFlags = captureExtraFlags + GateEventLog.FLAG_LEGACY
+            val out = ByteArrayOutputStream()
+            safe.compress(Bitmap.CompressFormat.JPEG, 80, out)
+            return out.toByteArray()
         }
 
-        val out = ByteArrayOutputStream()
-        safe.compress(Bitmap.CompressFormat.JPEG, 80, out)
-        return out.toByteArray()
+        val gate = PrivacyGate.process(oriented)
+        if (gate.safeToRecycle) {
+            if (oriented !== raw) oriented.recycle()
+            raw.recycle()
+        }
+        val jpeg = gate.jpeg
+        if (jpeg == null) {
+            settings.discardedCount = settings.discardedCount + 1
+            val reasons = gate.decision.reasons
+            if (GateEventLog.isFailure(reasons)) {
+                settings.lastError = "فشلت بوابة الخصوصية: ${reasons.joinToString(",")}"
+            }
+            discardDetail = GateEventLog.discardDetail(mode, reasons, gate.totalMs)
+            return null
+        }
+        captureExtraFlags = captureExtraFlags + GateEventLog.flag(gate.decision.tier)
+        return jpeg
+    }
+
+    /** صورة أُتلفت: يبقى سجل الحدث فقط (الرموز والزمن، بلا أي بيانات عن المشهد). */
+    private fun logDiscard() {
+        val detail = discardDetail ?: return
+        discardDetail = null
+        logEvent(GateEventLog.EVENT_DISCARDED, detail)
     }
 
     private fun releaseCamera() {
@@ -508,6 +549,7 @@ class CaptureService : LifecycleService() {
         captureMeterId = -1L
         captureLocation = null
         captureExtraFlags = emptySet()
+        discardDetail = null
         releaseWakeLock()
         if (mode == "auto") {
             if (settings.active) scheduleNext()

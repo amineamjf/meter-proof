@@ -231,6 +231,12 @@ class MainActivity : Activity() {
             startActivity(Intent(this, RoundActivity::class.java))
         })
 
+        col.addView(label("8) كشف تسليم الفواتير", true))
+        col.addView(label("معايرة الكاشف على أوراقك، تدريبه، وتفعيله (مغلق افتراضيًا). لا تُحفظ صور للمعايرة"))
+        col.addView(button("فتح كشف تسليم الفواتير") {
+            startActivity(Intent(this, DeliveryActivity::class.java))
+        })
+
         setContentView(ScrollView(this).apply { addView(col) })
     }
 

@@ -29,8 +29,16 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
+import com.meterproof.app.delivery.CalibrationProbe
+import com.meterproof.app.delivery.DeliveryDetector
+import com.meterproof.app.delivery.DeliveryEventLog
+import com.meterproof.app.delivery.DeliveryRevealProbe
+import com.meterproof.app.delivery.DeliveryStore
+import com.meterproof.app.delivery.Sample
 import com.meterproof.app.privacy.GateEventLog
+import com.meterproof.app.privacy.InvoiceDetail
 import com.meterproof.app.privacy.PrivacyGate
+import com.meterproof.app.privacy.PrivacyTier
 import java.io.ByteArrayOutputStream
 import java.util.Calendar
 import java.util.concurrent.Executors
@@ -49,8 +57,10 @@ class CaptureService : LifecycleService() {
         const val ACTION_ALARM = "com.meterproof.app.ALARM"
         const val ACTION_NOW = "com.meterproof.app.NOW"
         const val ACTION_METER = "com.meterproof.app.METER"
+        const val ACTION_CALIB = "com.meterproof.app.CALIB"
 
         private const val EXTRA_METER_ID = "meter_id"
+        private const val EXTRA_CALIB_POSITIVE = "calib_positive"
         private const val EXTRA_LAT = "lat"
         private const val EXTRA_LON = "lon"
         private const val EXTRA_ACC = "acc"
@@ -73,6 +83,19 @@ class CaptureService : LifecycleService() {
         fun captureNow(ctx: Context) {
             ContextCompat.startForegroundService(
                 ctx, Intent(ctx, CaptureService::class.java).setAction(ACTION_NOW)
+            )
+        }
+
+        /**
+         * التقاط عينة معايرة لكاشف الفواتير. positive = true: ورقة فاتورة ظاهرة، false: لا فاتورة.
+         * لا تُحفظ أي صورة: تمر الصورة على بوابة الخصوصية، وإن سلمت تُحفظ سمات رقمية فقط ثم تُرمى الصورة.
+         */
+        fun calibrate(ctx: Context, positive: Boolean) {
+            ContextCompat.startForegroundService(
+                ctx,
+                Intent(ctx, CaptureService::class.java)
+                    .setAction(ACTION_CALIB)
+                    .putExtra(EXTRA_CALIB_POSITIVE, positive)
             )
         }
 
@@ -113,6 +136,13 @@ class CaptureService : LifecycleService() {
 
     /** سبب إتلاف الصورة الحالية (يُسجَّل حدثًا بلا صورة). null إن لم تُتلف. */
     @Volatile private var discardDetail: String? = null
+
+    /** نتيجة كشف التسليم للصورة الحالية، تُسجَّل حدثًا بعد حفظ السجل (null إن لا شيء). */
+    private class PendingDelivery(val eventType: String, val score: Float, val modelId: String, val detail: InvoiceDetail)
+    @Volatile private var pendingDelivery: PendingDelivery? = null
+
+    /** تصنيف عينة المعايرة الجارية (true = فاتورة ظاهرة). */
+    @Volatile private var calibPositive = false
     private val roundDb by lazy { RoundDb(this) }
 
     private var cameraProvider: ProcessCameraProvider? = null
@@ -251,6 +281,13 @@ class CaptureService : LifecycleService() {
             ACTION_NOW -> {
                 if (!enterForeground()) return START_NOT_STICKY
                 capture("test")
+            }
+            ACTION_CALIB -> {
+                if (!enterForeground()) return START_NOT_STICKY
+                if (!capturing && intent != null) {
+                    calibPositive = intent.getBooleanExtra(EXTRA_CALIB_POSITIVE, false)
+                    capture("calib")
+                }
             }
             ACTION_METER -> {
                 if (!enterForeground()) return START_NOT_STICKY
@@ -438,6 +475,7 @@ class CaptureService : LifecycleService() {
                         val flags = flagSet.joinToString(",")
 
                         val recordId = store.addRecord(jpeg, mode, loc, flags, meter?.meterNo ?: "")
+                        logDelivery(recordId, mode, loc)
                         if (meter != null) {
                             roundDb.markDone(meter.id, recordId, flags, System.currentTimeMillis())
                             // عداد بلا إحداثية: نتعلّمها من أول صورة دقيقة التُقطت عنده
@@ -485,6 +523,8 @@ class CaptureService : LifecycleService() {
             raw
         }
 
+        if (mode == "calib") return processCalibration(oriented, raw)
+
         if (mode == "meter") {
             val safe = PrivacyFilter.process(oriented)
             if (safe == null) {
@@ -499,7 +539,8 @@ class CaptureService : LifecycleService() {
             return out.toByteArray()
         }
 
-        val gate = PrivacyGate.process(oriented)
+        val probe = buildDeliveryProbe()
+        val gate = PrivacyGate.process(oriented, probe)
         if (gate.safeToRecycle) {
             if (oriented !== raw) oriented.recycle()
             raw.recycle()
@@ -515,7 +556,81 @@ class CaptureService : LifecycleService() {
             return null
         }
         captureExtraFlags = captureExtraFlags + GateEventLog.flag(gate.decision.tier)
+        if (probe != null) noteDelivery(gate.decision.tier, probe)
         return jpeg
+    }
+
+    /** كاشف الفواتير لهذا الالتقاط، أو null إن كان معطّلًا أو لا نموذج معايَر (فلا كشف إطلاقًا). */
+    private fun buildDeliveryProbe(): DeliveryRevealProbe? {
+        if (!settings.deliveryDetection) return null
+        val model = try {
+            DeliveryStore(this).model()
+        } catch (e: Exception) {
+            null
+        }
+        if (model == null) return null
+        val detail = if (settings.deliveryOutlineOnly) InvoiceDetail.OUTLINE_ONLY else InvoiceDetail.FULL
+        return DeliveryRevealProbe(DeliveryDetector(model), detail)
+    }
+
+    /** يحدد علامات السجل المبصوم والحدث المؤجَّل بحسب قرار البوابة ونتيجة الكاشف. */
+    private fun noteDelivery(tier: PrivacyTier, probe: DeliveryRevealProbe) {
+        val r = probe.last ?: return
+        val type = DeliveryEventLog.eventType(tier, r.state) ?: return
+        captureExtraFlags = captureExtraFlags + DeliveryEventLog.flags(tier, probe.detail)
+        pendingDelivery = PendingDelivery(type, r.score, r.modelId, probe.detail)
+    }
+
+    /** يكتب حدث الكشف في سلسلة الأحداث بعد حفظ سجل الصورة، مع معرّف السجل. */
+    private fun logDelivery(recordId: String, mode: String, loc: Location?) {
+        val pd = pendingDelivery ?: return
+        pendingDelivery = null
+        val detail = DeliveryEventLog.detail(mode, pd.score, pd.modelId, pd.detail, recordId)
+        val now = System.currentTimeMillis()
+        executor.execute {
+            try {
+                store.addEvent(pd.eventType, now, loc?.latitude, loc?.longitude, loc?.accuracy, detail)
+            } catch (e: Exception) {
+                // تجاهل
+            }
+        }
+    }
+
+    /**
+     * عينة معايرة: الصورة تمر على البوابة كاملة، فإن ظهر شخص أو وجه أو فشل كاشف تُرفض العينة ولا يُحفظ شيء.
+     * وإن سلمت تُحفظ سمات رقمية فقط. لا تُكتب أي صورة، ويعيد null دائمًا.
+     */
+    private fun processCalibration(oriented: Bitmap, raw: Bitmap): ByteArray? {
+        val probe = CalibrationProbe()
+        val gate = PrivacyGate.process(oriented, probe)
+        if (gate.safeToRecycle) {
+            if (oriented !== raw) oriented.recycle()
+            raw.recycle()
+        }
+        val positive = calibPositive
+        var result = "FAILED"
+        if (gate.decision.tier == PrivacyTier.DISCARD) {
+            settings.discardedCount = settings.discardedCount + 1
+            val reasons = gate.decision.reasons
+            discardDetail = GateEventLog.discardDetail("calib", reasons, gate.totalMs)
+            result = if (GateEventLog.isFailure(reasons)) "FAILED" else "HAZARD"
+        } else {
+            val cand = probe.candidate
+            if (cand == null) {
+                result = if (positive) "NO_PAPER" else "NEG_NO_CANDIDATE"
+            } else {
+                try {
+                    DeliveryStore(this).addSample(Sample(cand.features, positive, System.currentTimeMillis()))
+                    result = if (positive) "SAVED_POS" else "SAVED_NEG"
+                } catch (e: Exception) {
+                    settings.lastError = "فشل حفظ عينة المعايرة: ${e.javaClass.simpleName}"
+                    settings.calibResult = "FAILED;${System.currentTimeMillis()}"
+                    return null
+                }
+            }
+        }
+        settings.calibResult = "$result;${System.currentTimeMillis()}"
+        return null
     }
 
     /** صورة أُتلفت: يبقى سجل الحدث فقط (الرموز والزمن، بلا أي بيانات عن المشهد). */
@@ -550,6 +665,7 @@ class CaptureService : LifecycleService() {
         captureLocation = null
         captureExtraFlags = emptySet()
         discardDetail = null
+        pendingDelivery = null
         releaseWakeLock()
         if (mode == "auto") {
             if (settings.active) scheduleNext()

@@ -84,4 +84,19 @@ class Settings(context: Context) {
     var lastError: String
         get() = sp.getString("lastError", "") ?: ""
         set(v) = sp.edit().putString("lastError", v).apply()
+
+    /** كشف تسليم الفواتير تلقائيًا (مغلق افتراضيًا؛ لا يعمل أيضًا دون نموذج معايَر) */
+    var deliveryDetection: Boolean
+        get() = sp.getBoolean("deliveryDetection", false)
+        set(v) = sp.edit().putBoolean("deliveryDetection", v).apply()
+
+    /** إخفاء محتوى الفاتورة وإبقاء إطارها فقط (مغلق افتراضيًا، فالمحتوى ظاهر بقرار صاحب المشروع) */
+    var deliveryOutlineOnly: Boolean
+        get() = sp.getBoolean("deliveryOutlineOnly", false)
+        set(v) = sp.edit().putBoolean("deliveryOutlineOnly", v).apply()
+
+    /** نتيجة آخر التقاط عينة معايرة للعرض: رمز;وقت (مثل SAVED_POS;1731000000000) */
+    var calibResult: String
+        get() = sp.getString("calibResult", "") ?: ""
+        set(v) = sp.edit().putString("calibResult", v).apply()
 }

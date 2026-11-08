@@ -57,7 +57,12 @@ data class PrivacyConfig(
     val minHazardScore: Float = 0.2f,
     /** من هذه الدرجة فما فوق: خطر مؤكد. بين الحدين: غير مؤكد (والنتيجة نفسها: إتلاف). */
     val certainHazardScore: Float = 0.5f,
-    val invoiceDetail: InvoiceDetail = InvoiceDetail.FULL
+    val invoiceDetail: InvoiceDetail = InvoiceDetail.FULL,
+    /**
+     * أكبر مساحة (نسبة من الإطار) يجوز كشفها بوضوح. منطقة أكبر لا تُكشف وتبقى الصورة مجرّدة.
+     * الافتراضي 1 (بلا حد) كي لا يتغير سلوك أي مستدعٍ قديم؛ بوابة الكاميرا تضبطه بقيمة أصغر.
+     */
+    val maxRevealArea: Float = 1f
 )
 
 /**
@@ -94,11 +99,14 @@ class PrivacyPolicy(val config: PrivacyConfig = PrivacyConfig()) {
         if (reasons.isNotEmpty()) return discard(reasons.toList())
 
         val region = reveal?.clamped()
-        return if (region != null && region.area > 0f) {
-            GateDecision(PrivacyTier.REVEAL, emptyList(), region)
-        } else {
-            GateDecision(PrivacyTier.ABSTRACT, emptyList())
+        if (region != null && region.area > 0f) {
+            // منطقة كبيرة تكشف من المشهد أكثر مما يلزم: تبقى الصورة مجرّدة
+            if (region.area > config.maxRevealArea) {
+                return GateDecision(PrivacyTier.ABSTRACT, listOf("REVEAL_TOO_LARGE"))
+            }
+            return GateDecision(PrivacyTier.REVEAL, emptyList(), region)
         }
+        return GateDecision(PrivacyTier.ABSTRACT, emptyList())
     }
 
     private fun discard(reasons: List<String>) = GateDecision(PrivacyTier.DISCARD, reasons)

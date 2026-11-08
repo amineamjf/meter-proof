@@ -41,6 +41,11 @@
             android:exported="false"
             android:label="جولة العدادات" />
 
+        <activity
+            android:name=".DeliveryActivity"
+            android:exported="false"
+            android:label="كشف تسليم الفواتير" />
+
         <service
             android:name=".CaptureService"
             android:exported="false"

@@ -566,7 +566,9 @@ class CaptureService : LifecycleService() {
 
         if (mode == "calib") return processCalibration(oriented, raw)
 
-        if (mode == "meter") {
+        // «meter» (وضع الجرد) ومستوى الخصوصية «وجوه فقط»: صورة واضحة وطمس الوجوه فقط.
+        // فشل الطمس يعني إتلاف الصورة، فلا تُحفظ صورة فيها وجه غير مطموس.
+        if (mode == "meter" || !settings.strictPrivacy) {
             val safe = PrivacyFilter.process(oriented)
             if (safe == null) {
                 settings.discardedCount = settings.discardedCount + 1
@@ -574,7 +576,8 @@ class CaptureService : LifecycleService() {
                 discardDetail = GateEventLog.discardDetail(mode, listOf("FILTER_FAILED"), 0L)
                 return null
             }
-            captureExtraFlags = captureExtraFlags + GateEventLog.FLAG_LEGACY
+            captureExtraFlags = captureExtraFlags +
+                (if (mode == "meter") GateEventLog.FLAG_LEGACY else GateEventLog.FLAG_FACES_ONLY)
             val out = ByteArrayOutputStream()
             safe.compress(Bitmap.CompressFormat.JPEG, 80, out)
             return out.toByteArray()

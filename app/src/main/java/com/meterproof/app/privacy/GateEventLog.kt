@@ -18,6 +18,9 @@ object GateEventLog {
     /** علامة المرشح القديم (طمس الوجوه فقط)، تُوسم بها صور وضع الجرد. */
     const val FLAG_LEGACY = "PRIVACY_LEGACY"
 
+    /** علامة مستوى «وجوه فقط»: الصورة واضحة وطُمست الوجوه فقط (لا بوابة تجريد). */
+    const val FLAG_FACES_ONLY = "PRIVACY_FACES"
+
     fun flag(tier: PrivacyTier): String = "PRIVACY_" + tier.code
 
     fun discardDetail(mode: String, reasons: List<String>, totalMs: Long): String =

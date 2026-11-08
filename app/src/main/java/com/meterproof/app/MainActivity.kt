@@ -52,6 +52,7 @@ class MainActivity : Activity() {
     private lateinit var mapView: TrackMapView
     private lateinit var stopField: EditText
     private lateinit var photoOnStopButton: Button
+    private lateinit var privacyButton: Button
     private lateinit var dayLabel: TextView
     private lateinit var summaryView: TextView
 
@@ -237,7 +238,26 @@ class MainActivity : Activity() {
             startActivity(Intent(this, DeliveryActivity::class.java))
         })
 
+        col.addView(label("9) مستوى الخصوصية", true))
+        col.addView(label("«وجوه فقط»: الصور واضحة وتُطمس الوجوه فقط (مناسب للتجربة). «صارم»: تجريد كامل للصور وإتلاف أي لقطة فيها شخص (للتشغيل الفعلي لاحقًا)"))
+        privacyButton = button("") { togglePrivacy() }
+        col.addView(privacyButton)
+        updatePrivacyText()
+
         setContentView(ScrollView(this).apply { addView(col) })
+    }
+
+    private fun togglePrivacy() {
+        settings.privacyLevel = if (settings.strictPrivacy) Settings.PRIVACY_FACES else Settings.PRIVACY_STRICT
+        updatePrivacyText()
+    }
+
+    private fun updatePrivacyText() {
+        privacyButton.text = if (settings.strictPrivacy) {
+            "المستوى الحالي: صارم، الصور مجرّدة (اضغط للعودة إلى «وجوه فقط»)"
+        } else {
+            "المستوى الحالي: وجوه فقط، الصور واضحة (اضغط للتحويل إلى «صارم»)"
+        }
     }
 
     // ---------------------------------------------------------------- الحالة

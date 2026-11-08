@@ -85,6 +85,17 @@ class Settings(context: Context) {
         get() = sp.getString("lastError", "") ?: ""
         set(v) = sp.edit().putString("lastError", v).apply()
 
+    /**
+     * مستوى الخصوصية للصور التلقائية:
+     * faces (الافتراضي في التجربة): الصورة واضحة كاملة وتُطمس الوجوه فقط (نفس الطمس القديم).
+     * strict: بوابة الخصوصية الصارمة، أي تجريد كامل إلى كتل ألوان وإتلاف أي لقطة فيها شخص أو وجه.
+     */
+    var privacyLevel: String
+        get() = sp.getString("privacyLevel", PRIVACY_FACES) ?: PRIVACY_FACES
+        set(v) = sp.edit().putString("privacyLevel", v).apply()
+
+    val strictPrivacy: Boolean get() = privacyLevel == PRIVACY_STRICT
+
     /** كشف تسليم الفواتير تلقائيًا (مغلق افتراضيًا؛ لا يعمل أيضًا دون نموذج معايَر) */
     var deliveryDetection: Boolean
         get() = sp.getBoolean("deliveryDetection", false)
@@ -99,4 +110,9 @@ class Settings(context: Context) {
     var calibResult: String
         get() = sp.getString("calibResult", "") ?: ""
         set(v) = sp.edit().putString("calibResult", v).apply()
+
+    companion object {
+        const val PRIVACY_FACES = "faces"
+        const val PRIVACY_STRICT = "strict"
+    }
 }

@@ -256,4 +256,48 @@ class RoundImportTest {
         assertEquals(50.0, RoundLogic.nearLimitM(10f), 0.001)
         assertEquals(90.0, RoundLogic.nearLimitM(60f), 0.001)
     }
+
+    // ---------------------------------------------------------------- وصول موثّق عند التوقف قرب عداد
+
+    @Test
+    fun arrival_picks_nearest_meter_within_radius() {
+        val base = 34.0
+        val items = listOf(
+            item(1, "A", base + 10.0 / 111_320.0, -5.0),
+            item(2, "B", base + 40.0 / 111_320.0, -5.0)
+        )
+        val a = RoundLogic.pickArrival(items, base, -5.0, 10f)!!
+        assertEquals(1L, a.meter.id)
+        assertTrue(!a.ambiguous)
+    }
+
+    @Test
+    fun arrival_is_ambiguous_when_two_meters_are_equally_close() {
+        val base = 34.0
+        val items = listOf(
+            item(1, "A", base + 10.0 / 111_320.0, -5.0),
+            item(2, "B", base + 15.0 / 111_320.0, -5.0)
+        )
+        assertTrue(RoundLogic.pickArrival(items, base, -5.0, 10f)!!.ambiguous)
+    }
+
+    @Test
+    fun arrival_ignores_far_done_arrived_and_gpsless_meters() {
+        val base = 34.0
+        val near = base + 5.0 / 111_320.0
+        val items = listOf(
+            item(1, "far", base + 100.0 / 111_320.0, -5.0),
+            item(2, "done", near, -5.0).copy(doneAt = 5L),
+            item(3, "arrived", near, -5.0).copy(arrivalAt = 5L),
+            item(4, "nogps", null, null)
+        )
+        assertNull(RoundLogic.pickArrival(items, base, -5.0, 10f))
+    }
+
+    @Test
+    fun arrival_radius_grows_with_poor_accuracy_but_is_capped() {
+        assertEquals(25.0, RoundLogic.arrivalRadiusM(10f), 0.001)
+        assertEquals(30.0, RoundLogic.arrivalRadiusM(20f), 0.001)
+        assertEquals(45.0, RoundLogic.arrivalRadiusM(100f), 0.001)
+    }
 }

@@ -74,6 +74,7 @@ class RoundActivity : Activity() {
     private val cPending = Color.parseColor("#98A2B3")
     private val cDone = Color.parseColor("#2E7D32")
     private val cWarn = Color.parseColor("#EF6C00")
+    private val cArrive = Color.parseColor("#0E7490")
     private val cAccent = Color.parseColor("#1D4ED8")
 
     private val ui = Handler(Looper.getMainLooper())
@@ -376,6 +377,13 @@ class RoundActivity : Activity() {
                 color = cDone
                 text = "✅ صُوِّر $time$hashPart"
             }
+        } else if (m.arrived) {
+            val hs = m.arrivalRecord?.let { hashes[it] }.orEmpty()
+            val hashPart = if (hs.isNotEmpty()) "  ·  بصمة #" + hs.take(6) else ""
+            val multi = if (m.arrivalFlags.contains("MULTI_NEAR")) "  ·  ⚠ عدة عدادات قريبة" else ""
+            color = cArrive
+            text = "📍 وُثّق الوصول ${timeFormat.format(Date(m.arrivalAt))}$hashPart$multi" +
+                "\nالتسليم غير مؤكَّد بعد"
         } else {
             color = cPending
             text = "لم يُسجَّل التسليم بعد"
@@ -480,7 +488,8 @@ class RoundActivity : Activity() {
                 val list = RoundLogic.rank(items, loc?.latitude, loc?.longitude, LIST_LIMIT)
                 val waited = if (waiting > 0) db.get(waiting) else null
                 var h = hashes
-                if (list.any { it.item.done && it.item.recordId != null && !h.containsKey(it.item.recordId) }) {
+                val wanted = list.flatMap { listOfNotNull(it.item.recordId, it.item.arrivalRecord) }
+                if (wanted.any { !h.containsKey(it) }) {
                     h = try {
                         EvidenceStore(this).readRecords().associate { it.optString("id") to it.optString("hash") }
                     } catch (e: Exception) {
@@ -509,10 +518,10 @@ class RoundActivity : Activity() {
             totalsView.text = "لم تستورد جولة بعد. اضغط «استيراد ملف الجولة»."
             progressBar.progress = 0
         } else {
-            totalsView.text = "${totals.done} من ${totals.total} تم تسجيله" +
+            totalsView.text = "${totals.done} تسليم مسجَّل  ·  ${totals.arrived} وصول موثّق  ·  من ${totals.total}" +
                 "  ·  بلا إحداثية ${totals.total - totals.withGps}" +
                 (if (totals.flagged > 0) "  ·  ⚠ بعيد ${totals.flagged}" else "")
-            progressBar.progress = totals.done * 1000 / totals.total
+            progressBar.progress = (totals.done + totals.arrived) * 1000 / totals.total
         }
         rebuildChips(stats)
 
@@ -664,6 +673,12 @@ class RoundActivity : Activity() {
                 "الإحداثية: غير معروفة (ستُحفظ من موقع أول صورة)"
             }
         ).append("\n")
+        if (m.arrived) {
+            sb.append("\n📍 وُثّق الوصول ").append(timeFormat.format(Date(m.arrivalAt)))
+            val ah = m.arrivalRecord?.let { hashes[it] }.orEmpty()
+            if (ah.isNotEmpty()) sb.append("\nبصمة الوصول: ").append(ah.take(16))
+            sb.append("\n(التسليم غير مؤكَّد بعد)")
+        }
         if (m.done) {
             sb.append("\n✅ صُوِّر ").append(timeFormat.format(Date(m.doneAt)))
             val hs = m.recordId?.let { hashes[it] }.orEmpty()

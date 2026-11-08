@@ -7,7 +7,7 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 
 /** إحصاءات الجولة. */
-data class RoundTotals(val total: Int, val done: Int, val withGps: Int, val flagged: Int)
+data class RoundTotals(val total: Int, val done: Int, val withGps: Int, val flagged: Int, val arrived: Int = 0)
 
 /** إحصاءات حي واحد. */
 data class QuartierStat(val name: String, val total: Int, val done: Int)
@@ -17,7 +17,7 @@ data class QuartierStat(val name: String, val total: Int, val done: Int)
  * حالة الإنجاز مستقلة عن ملف الاستيراد: إعادة استيراد الملف تحفظ ما أُنجز وما تعلّمه التطبيق من إحداثيات.
  */
 class RoundDb(context: Context) :
-    SQLiteOpenHelper(context.applicationContext, "round.db", null, 2) {
+    SQLiteOpenHelper(context.applicationContext, "round.db", null, 3) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -35,7 +35,10 @@ class RoundDb(context: Context) :
                 learned INTEGER NOT NULL DEFAULT 0,
                 done_at INTEGER NOT NULL DEFAULT 0,
                 record_id TEXT,
-                flags TEXT
+                flags TEXT,
+                arrival_at INTEGER NOT NULL DEFAULT 0,
+                arrival_record TEXT,
+                arrival_flags TEXT
             )"""
         )
         db.execSQL("CREATE INDEX idx_meters_quartier ON meters(quartier)")
@@ -45,6 +48,11 @@ class RoundDb(context: Context) :
         if (oldVersion < 2) {
             db.execSQL("ALTER TABLE meters ADD COLUMN customer_name TEXT")
             db.execSQL("ALTER TABLE meters ADD COLUMN new_index INTEGER")
+        }
+        if (oldVersion < 3) {
+            db.execSQL("ALTER TABLE meters ADD COLUMN arrival_at INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE meters ADD COLUMN arrival_record TEXT")
+            db.execSQL("ALTER TABLE meters ADD COLUMN arrival_flags TEXT")
         }
     }
 
@@ -56,20 +64,23 @@ class RoundDb(context: Context) :
         try {
             class Kept(
                 val doneAt: Long, val recordId: String?, val flags: String?,
-                val learned: Boolean, val lat: Double?, val lon: Double?
+                val learned: Boolean, val lat: Double?, val lon: Double?,
+                val arrivalAt: Long, val arrivalRecord: String?, val arrivalFlags: String?
             )
 
             val kept = HashMap<String, Kept>()
             db.rawQuery(
-                "SELECT meter_no, done_at, record_id, flags, learned, lat, lon FROM meters " +
-                    "WHERE done_at > 0 OR learned = 1",
+                "SELECT meter_no, done_at, record_id, flags, learned, lat, lon, " +
+                    "arrival_at, arrival_record, arrival_flags FROM meters " +
+                    "WHERE done_at > 0 OR learned = 1 OR arrival_at > 0",
                 null
             ).use { c ->
                 while (c.moveToNext()) {
                     kept[c.getString(0)] = Kept(
                         c.getLong(1), c.getString(2), c.getString(3), c.getInt(4) == 1,
                         if (c.isNull(5)) null else c.getDouble(5),
-                        if (c.isNull(6)) null else c.getDouble(6)
+                        if (c.isNull(6)) null else c.getDouble(6),
+                        c.getLong(7), c.getString(8), c.getString(9)
                     )
                 }
             }
@@ -108,6 +119,13 @@ class RoundDb(context: Context) :
                     cv.put("flags", k.flags)
                     db.update("meters", cv, "meter_no = ?", arrayOf(no))
                 }
+                if (k.arrivalAt > 0) {
+                    val cv = ContentValues()
+                    cv.put("arrival_at", k.arrivalAt)
+                    cv.put("arrival_record", k.arrivalRecord)
+                    cv.put("arrival_flags", k.arrivalFlags)
+                    db.update("meters", cv, "meter_no = ?", arrayOf(no))
+                }
                 if (k.learned && k.lat != null && k.lon != null) {
                     val cv = ContentValues()
                     cv.put("lat", k.lat)
@@ -138,11 +156,14 @@ class RoundDb(context: Context) :
         learned = c.getInt(10) == 1,
         doneAt = c.getLong(11),
         recordId = c.getString(12),
-        flags = c.getString(13) ?: ""
+        flags = c.getString(13) ?: "",
+        arrivalAt = c.getLong(14),
+        arrivalRecord = c.getString(15),
+        arrivalFlags = c.getString(16) ?: ""
     )
 
     private val columns =
-        "id, meter_no, contract, address, quartier, lat, lon, old_index, customer_name, new_index, learned, done_at, record_id, flags"
+        "id, meter_no, contract, address, quartier, lat, lon, old_index, customer_name, new_index, learned, done_at, record_id, flags, arrival_at, arrival_record, arrival_flags"
 
     @Synchronized
     fun get(id: Long): MeterItem? =
@@ -175,11 +196,12 @@ class RoundDb(context: Context) :
             "SELECT COUNT(*), " +
                 "COALESCE(SUM(CASE WHEN done_at > 0 THEN 1 ELSE 0 END), 0), " +
                 "COALESCE(SUM(CASE WHEN lat IS NOT NULL THEN 1 ELSE 0 END), 0), " +
-                "COALESCE(SUM(CASE WHEN flags LIKE '%FAR_FROM_METER%' THEN 1 ELSE 0 END), 0) " +
+                "COALESCE(SUM(CASE WHEN flags LIKE '%FAR_FROM_METER%' THEN 1 ELSE 0 END), 0), " +
+                "COALESCE(SUM(CASE WHEN arrival_at > 0 AND done_at = 0 THEN 1 ELSE 0 END), 0) " +
                 "FROM meters",
             null
         ).use { c ->
-            if (c.moveToFirst()) RoundTotals(c.getInt(0), c.getInt(1), c.getInt(2), c.getInt(3))
+            if (c.moveToFirst()) RoundTotals(c.getInt(0), c.getInt(1), c.getInt(2), c.getInt(3), c.getInt(4))
             else RoundTotals(0, 0, 0, 0)
         }
 
@@ -202,6 +224,30 @@ class RoundDb(context: Context) :
         cv.put("done_at", timeMs)
         cv.put("record_id", recordId)
         cv.put("flags", flags)
+        writableDatabase.update("meters", cv, "id = ?", arrayOf(id.toString()))
+    }
+
+    /** عدادات بإحداثية داخل مستطيل حول العامل، لم تُسلَّم ولم يُوثَّق وصولها (لاختيار عداد الوصول). */
+    @Synchronized
+    fun nearby(latMin: Double, latMax: Double, lonMin: Double, lonMax: Double): List<MeterItem> {
+        val out = ArrayList<MeterItem>()
+        readableDatabase.rawQuery(
+            "SELECT $columns FROM meters WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ? " +
+                "AND done_at = 0 AND arrival_at = 0",
+            arrayOf(latMin.toString(), latMax.toString(), lonMin.toString(), lonMax.toString())
+        ).use { c ->
+            while (c.moveToNext()) out.add(item(c))
+        }
+        return out
+    }
+
+    /** وصول موثّق بصورة (لا يعني أن الفاتورة سُلِّمت). */
+    @Synchronized
+    fun markArrival(id: Long, recordId: String, flags: String, timeMs: Long) {
+        val cv = ContentValues()
+        cv.put("arrival_at", timeMs)
+        cv.put("arrival_record", recordId)
+        cv.put("arrival_flags", flags)
         writableDatabase.update("meters", cv, "id = ?", arrayOf(id.toString()))
     }
 

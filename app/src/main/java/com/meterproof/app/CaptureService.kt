@@ -152,8 +152,27 @@ class CaptureService : LifecycleService() {
                     // تجاهل
                 }
             }
-            if (settings.photoOnStop && settings.active && !settings.paused && inWorkHours()) {
-                mainHandler.post { capture("stop") }
+            if (settings.active && !settings.paused && inWorkHours()) {
+                // توقف قرب إحداثية عداد في الجولة: صورة وصول مربوطة بذلك العداد (لا تعني تسليم الفاتورة)
+                executor.execute {
+                    val arrival = try {
+                        findArrival(fix)
+                    } catch (e: Exception) {
+                        null
+                    }
+                    mainHandler.post {
+                        if (arrival != null) {
+                            if (!capturing) {
+                                captureMeterId = arrival.meter.id
+                                captureLocation = lastLocation
+                                captureExtraFlags = if (arrival.ambiguous) setOf("MULTI_NEAR") else emptySet()
+                                capture("arrival")
+                            }
+                        } else if (settings.photoOnStop) {
+                            capture("stop")
+                        }
+                    }
+                }
             }
         }
 
@@ -367,6 +386,13 @@ class CaptureService : LifecycleService() {
 
     // ---------------------------------------------------------------- التصوير
 
+    private fun findArrival(fix: MotionTracker.Fix): Arrival? {
+        val dLat = 60.0 / 111_320.0
+        val dLon = dLat / maxOf(0.2, Math.cos(Math.toRadians(fix.lat)))
+        val items = roundDb.nearby(fix.lat - dLat, fix.lat + dLat, fix.lon - dLon, fix.lon + dLon)
+        return RoundLogic.pickArrival(items, fix.lat, fix.lon, fix.acc)
+    }
+
     private fun capture(mode: String) {
         if (capturing) return
         if (clockWatch.check(System.currentTimeMillis(), SystemClock.elapsedRealtime())) {
@@ -433,10 +459,14 @@ class CaptureService : LifecycleService() {
 
                         val recordId = store.addRecord(jpeg, mode, loc, flags, meter?.meterNo ?: "")
                         if (meter != null) {
-                            roundDb.markDone(meter.id, recordId, flags, System.currentTimeMillis())
-                            // عداد بلا إحداثية: نتعلّمها من أول صورة دقيقة التُقطت عنده
-                            if (!meter.hasGps && loc != null && loc.accuracy <= 30f) {
-                                roundDb.learn(meter.id, loc.latitude, loc.longitude)
+                            if (mode == "arrival") {
+                                roundDb.markArrival(meter.id, recordId, flags, System.currentTimeMillis())
+                            } else {
+                                roundDb.markDone(meter.id, recordId, flags, System.currentTimeMillis())
+                                // عداد بلا إحداثية: نتعلّمها من أول صورة دقيقة التُقطت عنده
+                                if (!meter.hasGps && loc != null && loc.accuracy <= 30f) {
+                                    roundDb.learn(meter.id, loc.latitude, loc.longitude)
+                                }
                             }
                         }
                     } catch (e: Exception) {

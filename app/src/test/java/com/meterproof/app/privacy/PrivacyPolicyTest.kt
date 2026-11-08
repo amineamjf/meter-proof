@@ -97,7 +97,7 @@ class PrivacyPolicyTest {
 
     @Test
     fun cleanFrameWithRevealRequestIsRevealed() {
-        val r = Region(0.2f, 0.3f, 0.8f, 0.9f)
+        val r = Region(0.2f, 0.3f, 0.7f, 0.9f)
         val d = policy.decide(listOf(ok("FACE"), ok("PERSON")), r)
         assertEquals(PrivacyTier.REVEAL, d.tier)
         assertEquals(r, d.revealRegion)
@@ -121,9 +121,9 @@ class PrivacyPolicyTest {
 
     @Test
     fun revealRegionIsClampedToFrame() {
-        val d = policy.decide(listOf(ok("FACE")), Region(-0.5f, 0.2f, 0.6f, 1.4f))
+        val d = policy.decide(listOf(ok("FACE")), Region(-0.1f, 0.5f, 0.3f, 1.2f))
         assertEquals(PrivacyTier.REVEAL, d.tier)
-        assertEquals(Region(0f, 0.2f, 0.6f, 1f), d.revealRegion)
+        assertEquals(Region(0f, 0.5f, 0.3f, 1f), d.revealRegion)
     }
 
     /** إضافة أي خطر أو فشل إلى النتائج لا يمكن أن تنتج مستوى أقل شدة. */
@@ -146,12 +146,20 @@ class PrivacyPolicyTest {
 
         repeat(500) {
             val base = List(1 + rnd.nextInt(4)) { randomOutcome() }
-            val reveal = if (rnd.nextBoolean()) Region(0.1f, 0.1f, 0.9f, 0.9f) else null
+            val reveal = if (rnd.nextBoolean()) Region(0.2f, 0.2f, 0.7f, 0.7f) else null
             val before = policy.decide(base, reveal).tier.severity
             val extended = base + randomOutcome()
             val after = policy.decide(extended, reveal).tier.severity
             assertTrue("severity dropped after adding an outcome", after >= before)
         }
+    }
+
+    @Test
+    fun tooLargeRevealRegionIsNotCertifiedAsPaper() {
+        // مساحة 0.64 > الحد 0.40: ليست ورقة بل مشهد، فيبقى الناتج مجرّدًا
+        val d = policy.decide(listOf(ok("FACE")), Region(0.1f, 0.1f, 0.9f, 0.9f))
+        assertEquals(PrivacyTier.ABSTRACT, d.tier)
+        assertNull(d.revealRegion)
     }
 
     @Test

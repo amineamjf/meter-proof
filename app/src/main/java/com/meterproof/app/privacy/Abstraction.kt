@@ -62,6 +62,48 @@ object Abstraction {
         return out
     }
 
+    /**
+     * صورة الدليل: كل الإطار مجرّد إلى كتل ألوان، ما عدا منطقة واحدة معتمدة (مربع الجسم الموضوع
+     * مع هامش صغير) تُنسخ من الأصل بدقة الناتج. ما خارج المنطقة لا يتأثر بأي تفصيل في الأصل.
+     * يعيد (بكسلات الناتج، ارتفاعه). عرض الناتج outW والارتفاع بنسبة الأصل.
+     */
+    fun revealComposite(
+        src: IntArray, w: Int, h: Int, cols: Int, rows: Int, outW: Int,
+        region: com.meterproof.app.privacy.Region, margin: Float = 0.10f
+    ): Pair<IntArray, Int> {
+        require(w >= 1 && h >= 1 && outW >= 1) { "bad size" }
+        val outH = (outW.toLong() * h / w).toInt().coerceAtLeast(1)
+        val blocks = blockMeans(src, w, h, cols, rows)
+        val out = upscale(blocks, cols, rows, outW, outH)
+        val r = revealRect(region, margin, outW, outH)
+        for (oy in r[1] until r[3]) {
+            val sy = (oy.toLong() * h / outH).toInt().coerceIn(0, h - 1)
+            for (ox in r[0] until r[2]) {
+                val sx = (ox.toLong() * w / outW).toInt().coerceIn(0, w - 1)
+                out[oy * outW + ox] = src[sy * w + sx] or (0xFF shl 24)
+            }
+        }
+        return Pair(out, outH)
+    }
+
+    /** مستطيل الكشف بإحداثيات الناتج [x0, y0, x1, y1) بعد إضافة الهامش وقصّه داخل الصورة. */
+    fun revealRect(
+        region: com.meterproof.app.privacy.Region, margin: Float, outW: Int, outH: Int
+    ): IntArray {
+        val rw = region.right - region.left
+        val rh = region.bottom - region.top
+        val l = (region.left - margin * rw).coerceIn(0f, 1f)
+        val t = (region.top - margin * rh).coerceIn(0f, 1f)
+        val rr = (region.right + margin * rw).coerceIn(0f, 1f)
+        val b = (region.bottom + margin * rh).coerceIn(0f, 1f)
+        return intArrayOf(
+            kotlin.math.floor(l * outW).toInt().coerceIn(0, outW),
+            kotlin.math.floor(t * outH).toInt().coerceIn(0, outH),
+            kotlin.math.ceil(rr * outW).toInt().coerceIn(0, outW),
+            kotlin.math.ceil(b * outH).toInt().coerceIn(0, outH)
+        )
+    }
+
     private fun start(k: Int, size: Int, parts: Int): Int =
         (k.toLong() * size / parts).toInt().coerceIn(0, size - 1)
 

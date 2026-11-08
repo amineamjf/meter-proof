@@ -101,7 +101,7 @@ class GateEngineTest {
 
     @Test
     fun revealRequestIsHonouredOnlyWhenEverythingIsClear() {
-        val region = Region(0.1f, 0.1f, 0.9f, 0.9f)
+        val region = Region(0.2f, 0.2f, 0.7f, 0.7f)
         val clear = engine(FakeDetector("FACE") { emptyList() }).evaluate(FakeFrame(), region)
         assertEquals(PrivacyTier.REVEAL, clear.decision.tier)
         val risky = engine(FakeDetector("FACE") { throw RuntimeException() }).evaluate(FakeFrame(), region)

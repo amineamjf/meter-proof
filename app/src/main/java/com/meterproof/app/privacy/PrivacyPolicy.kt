@@ -57,7 +57,12 @@ data class PrivacyConfig(
     val minHazardScore: Float = 0.2f,
     /** من هذه الدرجة فما فوق: خطر مؤكد. بين الحدين: غير مؤكد (والنتيجة نفسها: إتلاف). */
     val certainHazardScore: Float = 0.5f,
-    val invoiceDetail: InvoiceDetail = InvoiceDetail.FULL
+    val invoiceDetail: InvoiceDetail = InvoiceDetail.FULL,
+    /**
+     * أكبر مساحة (نسبة من الإطار) يجوز كشفها. منطقة أكبر لا تُعدّ ورقة بل مشهدًا، فلا تُكشف
+     * (الناتج مجرّد). هذا يمنع أن يتحول "كشف الفاتورة" إلى كشف جزء كبير من محيط البيت.
+     */
+    val maxRevealArea: Float = 0.40f
 )
 
 /**
@@ -66,7 +71,7 @@ data class PrivacyConfig(
  * - وجود أي شخص أو وجه أو خطر غير مؤكد في أي مكان من الإطار: إتلاف (DISCARD).
  * - فشل أي كاشف أو انتهاء مهلته: إتلاف.
  * - لا كاشفات إطلاقًا: إتلاف.
- * - إن سلم كل شيء: صورة مجرّدة، أو منطقة معتمدة إن طُلب كشفها.
+ * - إن سلم كل شيء: صورة مجرّدة، أو منطقة معتمدة إن طُلب كشفها وكانت مساحتها ضمن الحد المسموح.
  *
  * لا يوجد مسار يخفّض الحماية: إضافة أي خطر أو فشل لا يمكن أن تنتج مستوى أقل شدة.
  */
@@ -94,7 +99,7 @@ class PrivacyPolicy(val config: PrivacyConfig = PrivacyConfig()) {
         if (reasons.isNotEmpty()) return discard(reasons.toList())
 
         val region = reveal?.clamped()
-        return if (region != null && region.area > 0f) {
+        return if (region != null && region.area > 0f && region.area <= config.maxRevealArea) {
             GateDecision(PrivacyTier.REVEAL, emptyList(), region)
         } else {
             GateDecision(PrivacyTier.ABSTRACT, emptyList())

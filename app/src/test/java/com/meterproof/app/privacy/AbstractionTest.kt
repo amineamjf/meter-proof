@@ -4,6 +4,7 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.meterproof.app.privacy.Region
 import java.util.Random
 
 class AbstractionTest {
@@ -109,5 +110,68 @@ class AbstractionTest {
     @Test(expected = IllegalArgumentException::class)
     fun rejectsZeroOutputSize() {
         Abstraction.upscale(IntArray(4), 2, 2, 0, 4)
+    }
+
+    // ---- صورة الدليل (REVEAL)
+
+    private fun randomImage(w: Int, h: Int, seed: Long): IntArray {
+        val rnd = Random(seed)
+        return IntArray(w * h) { rgb(rnd.nextInt(256), rnd.nextInt(256), rnd.nextInt(256)) }
+    }
+
+    @Test
+    fun revealCompositeCopiesOnlyTheRegionAndAbstractsTheRest() {
+        val w = 80
+        val h = 60
+        val src = randomImage(w, h, 3)
+        val region = Region(0.25f, 0.25f, 0.5f, 0.5f)
+        val outW = 160
+        val (out, outH) = Abstraction.revealComposite(src, w, h, 8, 6, outW, region, margin = 0f)
+        assertEquals(120, outH)
+        val r = Abstraction.revealRect(region, 0f, outW, outH)
+
+        val outside = HashSet<Int>()
+        for (y in 0 until outH) for (x in 0 until outW) {
+            val inside = x >= r[0] && x < r[2] && y >= r[1] && y < r[3]
+            if (!inside) outside.add(out[y * outW + x])
+        }
+        // خارج المنطقة لا يوجد إلا ألوان الكتل (8x6 = 48 لونًا على الأكثر): لا أي تفصيل
+        assertTrue("distinct colours outside: ${outside.size}", outside.size <= 48)
+
+        // داخل المنطقة: بكسلات الأصل نفسها
+        var different = 0
+        for (y in r[1] until r[3]) for (x in r[0] until r[2]) {
+            val sx = x * w / outW
+            val sy = y * h / outH
+            if (out[y * outW + x] != (src[sy * w + sx] or (0xFF shl 24))) different++
+        }
+        assertEquals(0, different)
+    }
+
+    @Test
+    fun revealRectIncludesMarginAndStaysInsideTheImage() {
+        val r = Abstraction.revealRect(Region(0.4f, 0.4f, 0.6f, 0.6f), 0.5f, 100, 100)
+        assertArrayEquals(intArrayOf(30, 30, 70, 70), r)
+        val edge = Abstraction.revealRect(Region(0f, 0.9f, 0.2f, 1f), 0.5f, 100, 100)
+        assertEquals(0, edge[0])
+        assertEquals(100, edge[3])
+    }
+
+    @Test
+    fun revealOutputOutsideTheRegionIgnoresDetailInsideTheSource() {
+        // مصدران يختلفان بتفاصيل شديدة داخل كتلة واحدة فقط، لهما نفس متوسطات الكتل:
+        // الناتج خارج المنطقة متطابق تمامًا
+        val w = 16
+        val h = 16
+        val a = IntArray(w * h) { rgb(100, 100, 100) }
+        val b = a.copyOf()
+        for (y in 0 until 8) for (x in 8 until 16) {
+            a[y * w + x] = if ((x + y) % 2 == 0) rgb(200, 200, 200) else rgb(0, 0, 0)
+            b[y * w + x] = rgb(100, 100, 100)
+        }
+        val region = Region(0.0f, 0.5f, 0.5f, 1.0f) // الربع السفلي الأيسر فقط
+        val (oa, _) = Abstraction.revealComposite(a, w, h, 2, 2, 64, region, margin = 0f)
+        val (ob, _) = Abstraction.revealComposite(b, w, h, 2, 2, 64, region, margin = 0f)
+        assertArrayEquals(oa, ob)
     }
 }

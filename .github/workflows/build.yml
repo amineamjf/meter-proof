@@ -30,6 +30,19 @@ jobs:
       - name: Build debug APK
         run: gradle assembleDebug --stacktrace
 
+      - name: Verify APK signature and version
+        run: |
+          SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          APKSIGNER=$(ls -d "$SDK"/build-tools/*/apksigner | sort -V | tail -1)
+          AAPT=$(ls -d "$SDK"/build-tools/*/aapt | sort -V | tail -1)
+          APK=$(ls app/build/outputs/apk/debug/*.apk | head -1)
+          "$APKSIGNER" verify --print-certs "$APK" | tee cert.txt
+          "$AAPT" dump badging "$APK" | grep -m1 -o "versionCode='[0-9]*'" || true
+          # بصمة مفتاح التصحيح الثابت (app/debug-shared.keystore). إن اختلفت لن يُثبَّت التحديث فوق السابق
+          EXPECTED=13f2f6b5b0af1678db41b19a8f66c5656b0cd834d0c17f2ed630927fa9aad937
+          grep -qi "SHA-256 digest: $EXPECTED" cert.txt \
+            || { echo "::error::توقيع الـ APK ليس مفتاح التصحيح الثابت المتوقع"; exit 1; }
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:

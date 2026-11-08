@@ -55,6 +55,7 @@ class CaptureService : LifecycleService() {
         const val ACTION_START = "com.meterproof.app.START"
         const val ACTION_STOP = "com.meterproof.app.STOP"
         const val ACTION_ALARM = "com.meterproof.app.ALARM"
+        const val ACTION_SHIFT_END = "com.meterproof.app.SHIFT_END"
         const val ACTION_NOW = "com.meterproof.app.NOW"
         const val ACTION_METER = "com.meterproof.app.METER"
         const val ACTION_CALIB = "com.meterproof.app.CALIB"
@@ -244,6 +245,12 @@ class CaptureService : LifecycleService() {
             lastFixMock = isMock(location)
             watchTamper(location)
 
+            // انتهى الدوام بعد أن عملت فيه الجلسة: تُغلق (على الخيط الرئيسي، لا داخل استدعاء الموقع)
+            if (shiftOver()) {
+                mainHandler.post { endShiftIfOver() }
+                return
+            }
+
             // التسجيل محصور في ساعات الدوام وخارج الإيقاف المؤقت
             if (settings.paused || !inWorkHours()) {
                 if (tracking) {
@@ -300,6 +307,15 @@ class CaptureService : LifecycleService() {
                 if (!enterForeground()) return START_NOT_STICKY
                 onAlarm()
             }
+            ACTION_SHIFT_END -> {
+                if (!settings.active) {
+                    stopForegroundAndSelf()
+                    return START_NOT_STICKY
+                }
+                if (!enterForeground()) return START_NOT_STICKY
+                // إن لم ينتهِ الدوام فعلًا (تغيّرت الساعات مثلًا) نعيد ضبط المنبّه على النهاية الصحيحة
+                if (!endShiftIfOver()) scheduleShiftEnd()
+            }
             ACTION_NOW -> {
                 if (!enterForeground()) return START_NOT_STICKY
                 capture("test")
@@ -323,6 +339,8 @@ class CaptureService : LifecycleService() {
             }
             else -> {
                 if (!enterForeground()) return START_NOT_STICKY
+                // بداية جلسة جديدة تصفّر «عملت في الدوام»؛ إعادة تشغيل النظام للخدمة (active = true) تُبقيها
+                if (!settings.active) settings.workedThisSession = false
                 settings.active = true
                 settings.lastError = ""
                 tracker = newTracker()
@@ -335,6 +353,8 @@ class CaptureService : LifecycleService() {
                 if (autoTimeOff()) logTamper("AUTO_TIME_OFF")
                 startLocationUpdates()
                 scheduleNext()
+                // لو أُعيد تشغيل الخدمة بعد نهاية الدوام تُغلق فورًا بدل أن تبقى حتى الغد
+                if (!endShiftIfOver()) scheduleShiftEnd()
             }
         }
         return START_STICKY
@@ -410,11 +430,44 @@ class CaptureService : LifecycleService() {
         am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, alarmIntent())
     }
 
-    private fun inWorkHours(): Boolean {
-        val h = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
-        val s = settings.startHour
-        val e = settings.endHour
-        return if (s <= e) h in s until e else (h >= s || h < e)
+    private fun inWorkHours(): Boolean =
+        WorkHours.inHours(
+            Calendar.getInstance().get(Calendar.HOUR_OF_DAY), settings.startHour, settings.endHour
+        )
+
+    private fun shiftEndIntent(): PendingIntent = PendingIntent.getService(
+        this, 2,
+        Intent(this, CaptureService::class.java).setAction(ACTION_SHIFT_END),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
+
+    /** منبّه مستقل عند نهاية الدوام، حتى لا يتأخر الإغلاق إن غاب الـ GPS أو طال فاصل التصوير. */
+    private fun scheduleShiftEnd() {
+        try {
+            val at = WorkHours.nextEndMillis(System.currentTimeMillis(), settings.endHour)
+            getSystemService(AlarmManager::class.java)
+                .setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, shiftEndIntent())
+        } catch (e: Exception) {
+            // الفحص عند كل نقطة موقع وكل منبّه تصوير يبقى احتياطًا
+        }
+    }
+
+    /**
+     * هل انتهى الدوام بعد أن عملت فيه هذه الجلسة؟ ويسجّل أنها عملت متى كنا داخل الدوام.
+     * لا يوقف شيئًا بنفسه (آمن للاستدعاء من داخل استدعاء الموقع).
+     */
+    private fun shiftOver(): Boolean {
+        if (!settings.active) return false
+        val inNow = inWorkHours()
+        if (inNow && !settings.workedThisSession) settings.workedThisSession = true
+        return WorkHours.shouldEnd(settings.workedThisSession, inNow)
+    }
+
+    /** يغلق الجلسة إن انتهى الدوام. يعيد true إن أُغلقت. */
+    private fun endShiftIfOver(): Boolean {
+        if (!shiftOver()) return false
+        stopSession("AUTO_END_OF_HOURS")
+        return true
     }
 
     private fun onAlarm() {
@@ -422,6 +475,8 @@ class CaptureService : LifecycleService() {
             stopSession()
             return
         }
+        if (endShiftIfOver()) return
+        scheduleShiftEnd() // يلتقط أي تغيير في ساعة النهاية أثناء الجلسة
         if (settings.paused || !inWorkHours()) {
             scheduleNext()
             return
@@ -847,12 +902,20 @@ class CaptureService : LifecycleService() {
 
     // ---------------------------------------------------------------- الإيقاف
 
-    private fun stopSession() {
+    /** reason فارغ = إيقاف يدوي، وAUTO_END_OF_HOURS = أُغلقت عند نهاية الدوام. */
+    private fun stopSession(reason: String = "") {
         val wasActive = settings.active
         settings.active = false
+        settings.workedThisSession = false
         settings.nextCaptureAt = 0L
+        if (wasActive) {
+            settings.lastStopReason = reason
+            settings.lastStopAt = System.currentTimeMillis()
+        }
         try {
-            getSystemService(AlarmManager::class.java).cancel(alarmIntent())
+            val am = getSystemService(AlarmManager::class.java)
+            am.cancel(alarmIntent())
+            am.cancel(shiftEndIntent())
         } catch (e: Exception) {
             // لا شيء
         }
@@ -862,7 +925,7 @@ class CaptureService : LifecycleService() {
         }
         settings.motionState = "idle"
         stopMotionSensor()
-        if (wasActive) logEvent("SESSION_STOP", "")
+        if (wasActive) logEvent("SESSION_STOP", if (reason.isEmpty()) "" else "reason=$reason")
         stopLocationUpdates()
         releaseCamera()
         stopForegroundAndSelf()

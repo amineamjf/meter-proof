@@ -55,6 +55,7 @@ class CaptureService : LifecycleService() {
         private const val EXTRA_ELAPSED = "elapsed"
         private const val EXTRA_MOCK = "mock"
 
+        private const val RETRY_WHILE_WALKING_MS = 15_000L
         private const val CHANNEL_ID = "meterproof_session"
         private const val NOTIF_ID = 1001
 
@@ -121,6 +122,8 @@ class CaptureService : LifecycleService() {
     private var tracking = false
     private lateinit var tracker: MotionTracker
     private var motionSensor: MotionSensor? = null
+    /** هل يمشي العامل الآن (من مقياس التسارع)؟ التصوير العشوائي لا يعمل أثناء المشي. */
+    @Volatile private var walking = false
     private val clockWatch = ClockWatch()
     private var clockJumped = false
     private var lastFixMock = false
@@ -381,6 +384,14 @@ class CaptureService : LifecycleService() {
             scheduleNext()
             return
         }
+        if (walking) {
+            // أثناء المشي لا نصوّر: نعيد المحاولة بعد 15 ثانية حتى يقف العامل أو يهدأ
+            val at = System.currentTimeMillis() + RETRY_WHILE_WALKING_MS
+            settings.nextCaptureAt = at
+            getSystemService(AlarmManager::class.java)
+                .setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, alarmIntent())
+            return
+        }
         capture("auto")
     }
 
@@ -605,6 +616,7 @@ class CaptureService : LifecycleService() {
     private fun startMotionSensor() {
         if (motionSensor == null) {
             motionSensor = MotionSensor(this, mainHandler) { t, moving ->
+                walking = moving
                 if (tracking) tracker.onMotion(t, moving)
             }
         }
@@ -613,6 +625,7 @@ class CaptureService : LifecycleService() {
 
     private fun stopMotionSensor() {
         motionSensor?.stop()
+        walking = false
     }
 
     // ---------------------------------------------------------------- مؤشرات التلاعب والأحداث

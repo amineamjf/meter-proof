@@ -565,6 +565,9 @@ class CaptureService : LifecycleService() {
      *
      * - كل الصور (مجدولة، توقف، تجريبية) تمر على بوابة الخصوصية: إما صورة مجرّدة،
      *   أو لا صورة (null) ويُسجَّل حدث الإتلاف.
+     * - الوضع الافتراضي الآن (privacyMode = FACES): كل الصور على المرشح القديم (طمس الوجوه فقط)
+     *   وتُوسم PRIVACY_LEGACY، وكشف الفواتير معطّل لأنه يعتمد على البوابة الكاملة.
+     *   وضع FULL يعيد البوابة الكاملة. عينات المعايرة تمر دائمًا على البوابة ولا تُحفظ لها صورة.
      * - استثناء مؤقت: صور وضع الجرد (meter) تبقى على المرشح القديم (طمس الوجوه) حتى المرحلة 5،
      *   وتُوسم بعلامة PRIVACY_LEGACY داخل السجل المبصوم.
      */
@@ -580,7 +583,7 @@ class CaptureService : LifecycleService() {
 
         if (mode == "calib") return processCalibration(oriented, raw)
 
-        if (mode == "meter") {
+        if (mode == "meter" || settings.privacyMode != "FULL") {
             val safe = PrivacyFilter.process(oriented)
             if (safe == null) {
                 settings.discardedCount = settings.discardedCount + 1

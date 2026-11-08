@@ -69,6 +69,14 @@ class Settings(context: Context) {
         get() = sp.getInt("discarded", 0)
         set(v) = sp.edit().putInt("discarded", v).apply()
 
+    /**
+     * وضع الخصوصية للصور: FACES (الافتراضي) = طمس الوجوه فقط وباقي الصورة واضح،
+     * FULL = بوابة الخصوصية الكاملة (تجريد المشهد وإتلاف الصورة عند ظهور أشخاص).
+     */
+    var privacyMode: String
+        get() = sp.getString("privacyMode", "FACES") ?: "FACES"
+        set(v) = sp.edit().putString("privacyMode", v).apply()
+
     /** بعد كم ثانية من الثبات في المكان يُعدّ ذلك توقفًا طويلًا */
     var stopAfterSeconds: Int
         get() = sp.getInt("stopAfter", 30)

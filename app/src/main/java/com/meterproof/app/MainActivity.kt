@@ -52,6 +52,7 @@ class MainActivity : Activity() {
     private lateinit var mapView: TrackMapView
     private lateinit var stopField: EditText
     private lateinit var photoOnStopButton: Button
+    private lateinit var privacyModeButton: Button
     private lateinit var dayLabel: TextView
     private lateinit var summaryView: TextView
     private lateinit var mapPackView: TextView
@@ -156,6 +157,8 @@ class MainActivity : Activity() {
         stopField = numberField(settings.stopAfterSeconds).also { col.addView(it) }
         photoOnStopButton = button("") { togglePhotoOnStop() }
         col.addView(photoOnStopButton)
+        privacyModeButton = button("") { togglePrivacyMode() }
+        col.addView(privacyModeButton)
         updatePhotoOnStopText()
         col.addView(button("حفظ الإعدادات") { saveSettings(true) })
 
@@ -360,11 +363,25 @@ class MainActivity : Activity() {
     }
 
     private fun updatePhotoOnStopText() {
+        updatePrivacyModeText()
         photoOnStopButton.text = if (settings.photoOnStop) {
             "الصورة التلقائية عند التوقف الطويل: مفعّلة (اضغط للتعطيل)"
         } else {
             "الصورة التلقائية عند التوقف الطويل: معطّلة (اضغط للتفعيل)"
         }
+    }
+
+    private fun updatePrivacyModeText() {
+        privacyModeButton.text = if (settings.privacyMode == "FULL") {
+            "الخصوصية: كاملة (تجريد المشهد) — اضغط للتحويل إلى طمس الوجوه فقط"
+        } else {
+            "الخصوصية: طمس الوجوه فقط، والباقي واضح — اضغط لتفعيل التجريد الكامل"
+        }
+    }
+
+    private fun togglePrivacyMode() {
+        settings.privacyMode = if (settings.privacyMode == "FULL") "FACES" else "FULL"
+        updatePrivacyModeText()
     }
 
     private fun togglePhotoOnStop() {

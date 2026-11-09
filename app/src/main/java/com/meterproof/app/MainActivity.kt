@@ -86,6 +86,8 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        // بلاطات الخارطة المنزَّلة (قد تتغير بعد العودة من شاشة التنزيل)
+        mapView.setTiles(com.meterproof.app.map.TileStore.providerOrNull(this))
         uiHandler.post(ticker)
     }
 
@@ -195,6 +197,9 @@ class MainActivity : Activity() {
         }
         col.addView(mapView)
         col.addView(button("فتح الخارطة الحقيقية في المتصفح") { openMapInBrowser() })
+        col.addView(button("خارطة دون إنترنت (تنزيل مرة واحدة)") {
+            startActivity(Intent(this, MapDownloadActivity::class.java))
+        })
         exportButton = button("تصدير الصور والسجلات إلى التنزيلات") { doExport() }
         col.addView(exportButton)
 

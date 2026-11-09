@@ -7,7 +7,7 @@ import android.view.View
 import kotlin.math.abs
 
 /**
- * خارطة مبسطة تعمل دون إنترنت: المسار (أزرق) وأماكن الصور (دوائر حمراء) والتوقفات (مربعات برتقالية).
+ * خارطة تعمل دون إنترنت (بلاطات منزَّلة مسبقًا إن وُجدت، وإلا رسم مبسط): المسار (أزرق) وأماكن الصور (دوائر حمراء) والتوقفات (مربعات برتقالية).
  * الضغط على دائرة صورة يستدعي onPhotoTap بترتيبها. للخارطة الحقيقية استخدم map.html.
  */
 class TrackMapView(context: Context) : View(context) {
@@ -27,6 +27,14 @@ class TrackMapView(context: Context) : View(context) {
         this.photos = photos
         this.stops = stops
         invalidate()
+    }
+
+    /** بلاطات الخارطة المنزَّلة (null = الرسم المبسط على خلفية سادة). */
+    fun setTiles(p: com.meterproof.app.map.TileProvider?) {
+        if (renderer.tiles !== p) {
+            renderer.tiles = p
+            invalidate()
+        }
     }
 
     fun setSelected(imageIndex: Int) {

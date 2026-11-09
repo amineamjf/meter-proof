@@ -4,15 +4,17 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
-import kotlin.math.cos
-import kotlin.math.max
-import kotlin.math.min
+import com.meterproof.app.map.MapCamera
+import com.meterproof.app.map.TileLayer
+import com.meterproof.app.map.TileProvider
 
 /**
- * يرسم المسار وأماكن الصور والتوقفات على لوحة (بلا طبقة شوارع، ويعمل دون إنترنت).
+ * يرسم المسار وأماكن الصور والتوقفات على لوحة، ويعمل دون إنترنت.
+ * إن وُجد [tiles] (بلاطات منزَّلة مسبقًا) رُسمت الخارطة الحقيقية تحت كل شيء؛
+ * وإلا بقي الرسم المبسط على خلفية سادة كما كان.
  * يُستعمل في الشاشة (TrackMapView) وفي تقرير PDF. [density] يضبط حجم الخطوط والدوائر.
  */
-class MapRenderer(private val density: Float) {
+class MapRenderer(private val density: Float, var tiles: TileProvider? = null) {
 
     private fun dp(v: Float) = v * density
 
@@ -42,6 +44,16 @@ class MapRenderer(private val density: Float) {
         color = Color.parseColor("#37474F")
         strokeWidth = dp(2f)
     }
+    private val haloPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(215, 255, 255, 255)
+        style = Paint.Style.STROKE
+        strokeWidth = dp(6.5f)
+        strokeJoin = Paint.Join.ROUND
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val chipPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = TileLayer.ATTRIBUTION_BG }
+    private var tileLayer: TileLayer? = null
+    private var tileLayerFor: TileProvider? = null
 
     /** مواضع دوائر الصور على الشاشة بعد آخر رسم (للضغط). */
     var photoX = FloatArray(0)
@@ -74,36 +86,26 @@ class MapRenderer(private val density: Float) {
             return
         }
 
-        var minLat = all[0].lat
-        var maxLat = all[0].lat
-        var minLon = all[0].lon
-        var maxLon = all[0].lon
-        for (p in all) {
-            minLat = min(minLat, p.lat); maxLat = max(maxLat, p.lat)
-            minLon = min(minLon, p.lon); maxLon = max(maxLon, p.lon)
-        }
-        val midLat = (minLat + maxLat) / 2
-        val lonFactor = cos(Math.toRadians(midLat))
-        // مدى أدنى (~50 م) كي لا ينهار الرسم عند نقطة واحدة
-        val minSpan = 0.0005
-        val spanX = max((maxLon - minLon) * lonFactor, minSpan)
-        val spanY = max(maxLat - minLat, minSpan)
-
         val pad = dp(28f)
-        val availW = max(w - 2 * pad, 1f)
-        val availH = max(h - 2 * pad, 1f)
-        val scale = min(availW / spanX, availH / spanY).toFloat() // بكسل لكل درجة عرض
-        val offX = (w - (spanX * scale).toFloat()) / 2
-        val offY = (h - (spanY * scale).toFloat()) / 2
+        val cam = MapCamera.fit(all.map { Pair(it.lat, it.lon) }, w, h, pad)!!
+        fun px(lon: Double): Float = cam.x(lon)
+        fun py(lat: Double): Float = cam.y(lat)
 
-        fun px(lon: Double): Float = offX + (((lon - minLon) * lonFactor) * scale).toFloat()
-        fun py(lat: Double): Float = offY + (((maxLat - lat)) * scale).toFloat()
+        // البلاطات تحت كل شيء
+        var tilesDrawn = 0
+        val provider = tiles
+        if (provider != null) {
+            if (tileLayerFor !== provider) { tileLayer = TileLayer(provider); tileLayerFor = provider }
+            tilesDrawn = tileLayer!!.draw(canvas, cam)
+        }
+        val overTiles = tilesDrawn > 0
 
         // المسار
         if (track.size >= 2) {
             val path = Path()
             path.moveTo(px(track[0].lon), py(track[0].lat))
             for (i in 1 until track.size) path.lineTo(px(track[i].lon), py(track[i].lat))
+            if (overTiles) canvas.drawPath(path, haloPaint)
             canvas.drawPath(path, linePaint)
         }
         if (track.isNotEmpty()) {
@@ -141,8 +143,8 @@ class MapRenderer(private val density: Float) {
             canvas.drawText((p.index + 1).toString(), x, y + dp(4f), textPaint)
         }
 
-        // شريط المقياس: المتر لكل بكسل = 111320 / (بكسل لكل درجة)
-        val metersPerPx = 111320.0 / scale
+        // شريط المقياس (متر حقيقي لكل بكسل عند مركز الخارطة)
+        val metersPerPx = cam.metersPerPixel
         val steps = doubleArrayOf(
             5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0,
             5000.0, 10000.0, 20000.0, 50000.0
@@ -154,6 +156,9 @@ class MapRenderer(private val density: Float) {
         val barPx = (chosen / metersPerPx).toFloat().coerceAtMost(w * 0.5f)
         val bx = dp(12f)
         val by = h - dp(14f)
+        if (overTiles) {
+            canvas.drawRoundRect(bx - dp(6f), by - dp(24f), bx + barPx + dp(12f), by + dp(8f), dp(6f), dp(6f), chipPaint)
+        }
         canvas.drawLine(bx, by, bx + barPx, by, scalePaint)
         canvas.drawLine(bx, by - dp(4f), bx, by + dp(4f), scalePaint)
         canvas.drawLine(bx + barPx, by - dp(4f), bx + barPx, by + dp(4f), scalePaint)
@@ -163,6 +168,16 @@ class MapRenderer(private val density: Float) {
 
         // الشمال
         infoPaint.textAlign = Paint.Align.RIGHT
+        if (overTiles) canvas.drawRoundRect(w - dp(70f), dp(3f), w - dp(4f), dp(25f), dp(6f), dp(6f), chipPaint)
         canvas.drawText("↑ شمال", w - dp(10f), dp(18f), infoPaint)
+
+        // نسب البيانات (مطلوبة قانونيًا مع بيانات OpenStreetMap)
+        if (overTiles && provider != null) {
+            val small = Paint(infoPaint).apply { textSize = dp(9f); textAlign = Paint.Align.RIGHT }
+            val text = provider.attribution
+            val tw = small.measureText(text)
+            canvas.drawRect(w - tw - dp(10f), h - dp(14f), w, h, chipPaint)
+            canvas.drawText(text, w - dp(5f), h - dp(4f), small)
+        }
     }
 }

@@ -60,7 +60,7 @@ object Exporter {
             // ملخص اليوم الحالي بصيغة PDF (فشله لا يُسقط بقية التصدير)
             try {
                 val (s, e) = Days.range(0)
-                val pdf = summaryPdfBytes(store, s, e, verification)
+                val pdf = summaryPdfBytes(context, store, s, e, verification)
                 write(context, dir, "summary_today.pdf", "application/pdf") { out -> out.write(pdf) }
             } catch (ex: Exception) {
                 // نتابع بدون الملخص
@@ -77,7 +77,7 @@ object Exporter {
         context: Context, store: EvidenceStore, dayStartMs: Long, dayEndMs: Long
     ): Result {
         return try {
-            val pdf = summaryPdfBytes(store, dayStartMs, dayEndMs, store.verify())
+            val pdf = summaryPdfBytes(context, store, dayStartMs, dayEndMs, store.verify())
             val name = "summary_" + SimpleDateFormat("yyyyMMdd", Locale.US).format(Date(dayStartMs)) + ".pdf"
             write(context, "MeterProof", name, "application/pdf") { out -> out.write(pdf) }
             Result(true, "تم حفظ الملخص: التنزيلات/MeterProof/$name")
@@ -87,7 +87,7 @@ object Exporter {
     }
 
     private fun summaryPdfBytes(
-        store: EvidenceStore, dayStartMs: Long, dayEndMs: Long, verification: String
+        context: Context, store: EvidenceStore, dayStartMs: Long, dayEndMs: Long, verification: String
     ): ByteArray {
         val now = System.currentTimeMillis()
         val summary = DaySummaryBuilder.build(
@@ -98,7 +98,8 @@ object Exporter {
             .map { GeoPoint(it.lat, it.lon) }
         val dayPhotos = store.photoPoints().filter { it.timeMillis in dayStartMs until dayEndMs }
         val bos = ByteArrayOutputStream()
-        PdfReport.write(summary, now, dayTrack, dayPhotos, verification, bos)
+        PdfReport.write(summary, now, dayTrack, dayPhotos, verification, bos,
+            com.meterproof.app.map.TileStore.providerOrNull(context))
         return bos.toByteArray()
     }
 

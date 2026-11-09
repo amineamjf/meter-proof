@@ -24,7 +24,8 @@ object PdfReport {
         track: List<GeoPoint>,
         photos: List<PhotoPoint>,
         verification: String,
-        out: OutputStream
+        out: OutputStream,
+        tiles: com.meterproof.app.map.TileProvider? = null
     ) {
         val doc = PdfDocument()
         var pageNo = 1
@@ -86,7 +87,7 @@ object PdfReport {
         canvas.save()
         canvas.translate(MARGIN, y)
         canvas.clipRect(0f, 0f, mapW, mapH)
-        MapRenderer(1.2f).draw(canvas, mapW, mapH, track, photos, summary.stops, -1)
+        MapRenderer(1.2f, tiles).draw(canvas, mapW, mapH, track, photos, summary.stops, -1)
         canvas.restore()
         y += mapH + 20f
 

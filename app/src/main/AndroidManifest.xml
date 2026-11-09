@@ -5,6 +5,10 @@
         android:name="android.hardware.camera"
         android:required="true" />
 
+    <!-- لتنزيل بلاطات الخارطة مرة واحدة بطلب صريح من المستخدم في شاشة "خارطة دون إنترنت" فقط.
+         لا يوجد أي استعمال آخر للشبكة: الأدلة والمسار والتقارير تبقى محلية بالكامل. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
@@ -40,6 +44,11 @@
             android:name=".RoundActivity"
             android:exported="false"
             android:label="جولة العدادات" />
+
+        <activity
+            android:name=".MapDownloadActivity"
+            android:exported="false"
+            android:label="خارطة دون إنترنت" />
 
         <service
             android:name=".CaptureService"

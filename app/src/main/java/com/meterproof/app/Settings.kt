@@ -84,4 +84,29 @@ class Settings(context: Context) {
     var lastError: String
         get() = sp.getString("lastError", "") ?: ""
         set(v) = sp.edit().putString("lastError", v).apply()
+
+    // ---- خارطة البلاطات دون إنترنت (تُستعمل في شاشة التنزيل فقط)
+
+    /** رابط البلاطات، مثل https://مزود/{z}/{x}/{y}.png?key=... (فارغ = لم يُضبط) */
+    var tileUrl: String
+        get() = sp.getString("tileUrl", "") ?: ""
+        set(v) = sp.edit().putString("tileUrl", v.trim()).apply()
+
+    /** نسب البيانات التي تُرسم على الخارطة */
+    var tileAttribution: String
+        get() = sp.getString("tileAttribution", "© OpenStreetMap contributors") ?: "© OpenStreetMap contributors"
+        set(v) = sp.edit().putString("tileAttribution", v.trim()).apply()
+
+    /** نصف قطر منطقة التنزيل بالكيلومتر */
+    var tileRadiusKm: Int
+        get() = sp.getInt("tileRadiusKm", 3)
+        set(v) = sp.edit().putInt("tileRadiusKm", v).apply()
+
+    var tileZoomMin: Int
+        get() = sp.getInt("tileZoomMin", 13)
+        set(v) = sp.edit().putInt("tileZoomMin", v).apply()
+
+    var tileZoomMax: Int
+        get() = sp.getInt("tileZoomMax", 18)
+        set(v) = sp.edit().putInt("tileZoomMax", v).apply()
 }

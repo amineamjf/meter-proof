@@ -126,4 +126,19 @@ class Settings(context: Context) {
     var calibResult: String
         get() = sp.getString("calibResult", "") ?: ""
         set(v) = sp.edit().putString("calibResult", v).apply()
+
+    /** معرّف النموذج الذي أُشعِر المستخدم بأنه جاهز (كي لا يتكرر الإشعار لنفس النموذج) */
+    var trainReadyNotified: String
+        get() = sp.getString("trainReadyNotified", "") ?: ""
+        set(v) = sp.edit().putString("trainReadyNotified", v).apply()
+
+    /** مفتاح MapTiler للقمر الصناعي والتضاريس (يُدخله المستخدم؛ لا يُحفظ في الكود) */
+    var maptilerKey: String
+        get() = sp.getString("maptilerKey", "") ?: ""
+        set(v) = sp.edit().putString("maptilerKey", v.trim()).apply()
+
+    /** طبقة الخارطة الحالية: STREETS أو SATELLITE أو TERRAIN */
+    var mapLayer: String
+        get() = sp.getString("mapLayer", "STREETS") ?: "STREETS"
+        set(v) = sp.edit().putString("mapLayer", v).apply()
 }

@@ -47,6 +47,11 @@
             android:label="كشف تسليم الفواتير" />
 
         <activity
+            android:name=".TrainingStatusActivity"
+            android:exported="false"
+            android:label="حالة التدريب" />
+
+        <activity
             android:name=".MapActivity"
             android:exported="false"
             android:label="الخارطة" />

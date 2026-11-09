@@ -98,6 +98,8 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         uiHandler.post(ticker)
+        // إشعار داخل التطبيق عند جاهزية الكاشف (مرة واحدة لكل نموذج)
+        uiHandler.post { TrainingNotice.maybeShow(this) }
     }
 
     override fun onPause() {
@@ -320,6 +322,9 @@ class MainActivity : Activity() {
         col.addView(label("معايرة الكاشف على أوراقك، تدريبه، وتفعيله (مغلق افتراضيًا). لا تُحفظ صور للمعايرة"))
         col.addView(button("فتح كشف تسليم الفواتير") {
             startActivity(Intent(this, DeliveryActivity::class.java))
+        })
+        col.addView(button("حالة التدريب (أين وصل وما ينقص)") {
+            startActivity(Intent(this, TrainingStatusActivity::class.java))
         })
 
         setContentView(ScrollView(this).apply {

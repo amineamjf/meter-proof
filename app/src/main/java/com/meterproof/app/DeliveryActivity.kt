@@ -2,6 +2,7 @@ package com.meterproof.app
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.Intent
 import android.graphics.Typeface
 import android.os.Bundle
 import android.os.Handler
@@ -87,6 +88,9 @@ class DeliveryActivity : Activity() {
             )
         )
 
+        col.addView(button("حالة التدريب: أين وصلت وما ينقصك") {
+            startActivity(Intent(this, TrainingStatusActivity::class.java))
+        })
         statusView = TextView(this).apply { textSize = 14f }
         col.addView(statusView)
 
@@ -199,6 +203,7 @@ class DeliveryActivity : Activity() {
                             "تم: دقة ${SampleCodec.pct(m.precision)}% واستدعاء ${SampleCodec.pct(m.recall)}% (تحقق متقاطع)",
                             Toast.LENGTH_LONG
                         ).show()
+                        TrainingNotice.maybeShow(this)
                     }
                     is InvoiceTrainer.Result.NotReady -> {
                         settings.deliveryDetection = false

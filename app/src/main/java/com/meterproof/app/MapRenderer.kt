@@ -57,6 +57,30 @@ class MapRenderer(private val density: Float) {
         style = Paint.Style.FILL
     }
 
+    private val meterStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = dp(1.5f)
+        color = Color.WHITE
+    }
+    private val legendPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#37474F")
+        textSize = dp(11f)
+        textAlign = Paint.Align.LEFT
+    }
+
+    private fun meterColor(s: MeterMarkState): Int = when (s) {
+        MeterMarkState.PENDING -> Color.parseColor("#98A2B3")
+        MeterMarkState.ARRIVED -> Color.parseColor("#0E7490")
+        MeterMarkState.DONE -> Color.parseColor("#2E7D32")
+        MeterMarkState.FLAGGED -> Color.parseColor("#EF6C00")
+    }
+
+    /** مواضع عدادات الجولة على الشاشة بعد آخر رسم (للضغط). */
+    var meterX = FloatArray(0)
+        private set
+    var meterY = FloatArray(0)
+        private set
+
     /** مواضع دوائر الصور على الشاشة بعد آخر رسم (للضغط). */
     var photoX = FloatArray(0)
         private set
@@ -71,7 +95,8 @@ class MapRenderer(private val density: Float) {
         photos: List<PhotoPoint>,
         stops: List<Stop>,
         selected: Int,
-        projector: Projector? = null
+        projector: Projector? = null,
+        meters: List<MeterPoint> = emptyList()
     ) {
         if (projector == null) canvas.drawRect(0f, 0f, w, h, bgPaint)
 
@@ -90,7 +115,11 @@ class MapRenderer(private val density: Float) {
             all.addAll(track)
             for (p in photos) all.add(GeoPoint(p.lat, p.lon))
             for (s in validStops) all.add(GeoPoint(s.lat, s.lon))
+            // لا مسار ولا صور ولا توقفات: نعرض الجولة نفسها بدل رسالة «لا توجد نقاط»
+            if (all.isEmpty()) for (m in meters) all.add(GeoPoint(m.lat, m.lon))
             if (all.isEmpty()) {
+                meterX = FloatArray(0)
+                meterY = FloatArray(0)
                 infoPaint.textAlign = Paint.Align.CENTER
                 canvas.drawText("لا توجد نقاط موقع بعد", w / 2, h / 2, infoPaint)
                 photoX = FloatArray(0)
@@ -124,6 +153,24 @@ class MapRenderer(private val density: Float) {
             py = { lat -> offY + ((maxLat - lat) * scale).toFloat() }
             // المتر لكل بكسل = 111320 / (بكسل لكل درجة)
             metersPerPx = 111320.0 / scale
+        }
+
+        // عدادات الجولة: تحت المسار والصور، بلون حالتها (الأقل أهمية أولًا كي لا يغطي الرمادي غيره)
+        meterX = FloatArray(meters.size)
+        meterY = FloatArray(meters.size)
+        for ((i, m) in meters.withIndex()) {
+            meterX[i] = px(m.lon)
+            meterY[i] = py(m.lat)
+        }
+        for (pass in 0..1) {
+            for ((i, m) in meters.withIndex()) {
+                val pending = m.state == MeterMarkState.PENDING
+                if (pending != (pass == 0)) continue
+                dotPaint.color = meterColor(m.state)
+                val r = if (pending) dp(5f) else dp(7f)
+                canvas.drawCircle(meterX[i], meterY[i], r, dotPaint)
+                canvas.drawCircle(meterX[i], meterY[i], r, meterStroke)
+            }
         }
 
         // المسار
@@ -193,6 +240,30 @@ class MapRenderer(private val density: Float) {
         canvas.drawLine(bx, by - dp(4f), bx, by + dp(4f), scalePaint)
         canvas.drawLine(bx + barPx, by - dp(4f), bx + barPx, by + dp(4f), scalePaint)
         canvas.drawText(label, bx, by - dp(8f), infoPaint)
+
+        // مفتاح ألوان العدادات (أعلى اليسار)
+        if (meters.isNotEmpty()) {
+            val items = listOf(
+                "لم يُزَر" to MeterMarkState.PENDING,
+                "وصول موثّق" to MeterMarkState.ARRIVED,
+                "صُوِّر" to MeterMarkState.DONE,
+                "صُوِّر وبعيد" to MeterMarkState.FLAGGED
+            )
+            var maxW = 0f
+            for ((t, _) in items) maxW = max(maxW, legendPaint.measureText(t))
+            val lx = dp(8f)
+            val rowH = dp(16f)
+            canvas.drawRect(
+                lx - dp(4f), dp(4f), lx + dp(18f) + maxW + dp(4f),
+                dp(4f) + rowH * items.size + dp(4f), haloPaint
+            )
+            for ((n, entry) in items.withIndex()) {
+                val cy = dp(12f) + rowH * n
+                dotPaint.color = meterColor(entry.second)
+                canvas.drawCircle(lx + dp(5f), cy, dp(5f), dotPaint)
+                canvas.drawText(entry.first, lx + dp(16f), cy + dp(4f), legendPaint)
+            }
+        }
 
         // الشمال
         infoPaint.textAlign = Paint.Align.RIGHT

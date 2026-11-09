@@ -29,6 +29,8 @@ class MapActivity : Activity() {
     private var shownCount = -1
     private var shownTrack = -1
     private var shownEvents = -1
+    private var shownTotals: RoundTotals? = null
+    private val roundDb by lazy { RoundDb(this) }
 
     private val handler = Handler(Looper.getMainLooper())
     private val ticker = object : Runnable {
@@ -51,6 +53,7 @@ class MapActivity : Activity() {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
             )
             onPhotoTap = { index -> showPhoto(index) }
+            onMeterTap = { m -> MeterDialog.show(this@MapActivity, m, store) { idx -> showPhoto(idx) } }
         }
         root.addView(map)
 
@@ -121,11 +124,22 @@ class MapActivity : Activity() {
         val count = store.count()
         val track = store.trackPointCount()
         val events = store.events().size
-        if (count == shownCount && track == shownTrack && events == shownEvents) return
+        val totals = try {
+            roundDb.totals()
+        } catch (e: Exception) {
+            null
+        }
+        if (count == shownCount && track == shownTrack && events == shownEvents && totals == shownTotals) return
         shownCount = count
         shownTrack = track
         shownEvents = events
-        map.setData(store.trackPoints(), store.photoPoints(), StopPairing.pair(store.events()))
+        shownTotals = totals
+        val meters = try {
+            roundDb.markers()
+        } catch (e: Exception) {
+            emptyList()
+        }
+        map.setData(store.trackPoints(), store.photoPoints(), StopPairing.pair(store.events()), meters)
     }
 
     private fun showPhoto(index: Int) {

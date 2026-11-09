@@ -37,3 +37,23 @@ data class PhotoPoint(
     val lon: Double,
     val accuracy: Float?
 )
+
+/** حالة عداد الجولة على الخارطة. */
+enum class MeterMarkState { PENDING, ARRIVED, DONE, FLAGGED }
+
+/**
+ * عداد من الجولة له إحداثية، لرسمه على الخارطة.
+ * photoId: معرّف سجل الصورة المرتبطة به (التسليم أو الوصول) إن وُجدت.
+ * visitedAt: وقت آخر وصول أو تصوير (0 إن لم يُزَر)، لتصفية تقرير يوم معين.
+ */
+data class MeterPoint(
+    val id: Long,
+    val meterNo: String,
+    val title: String,
+    val detail: String,
+    val lat: Double,
+    val lon: Double,
+    val state: MeterMarkState,
+    val photoId: String?,
+    val visitedAt: Long
+)

@@ -16,7 +16,8 @@ object MapHtml {
         track: List<GeoPoint>,
         photos: List<PhotoPoint>,
         stops: List<Stop>,
-        withImages: Boolean
+        withImages: Boolean,
+        meters: List<MeterPoint> = emptyList()
     ): String {
         val trackJson = JSONArray()
         for (p in track) trackJson.put(JSONArray().put(p.lat).put(p.lon))
@@ -41,7 +42,20 @@ object MapHtml {
             )
         }
 
+        // عدادات الجولة: رقم العداد وحالته فقط (بلا اسم زبون ولا عنوان في الملف المُصدَّر)
+        val metersJson = JSONArray()
+        for (m in meters) {
+            val o = JSONObject()
+                .put("no", m.meterNo)
+                .put("lat", m.lat)
+                .put("lon", m.lon)
+                .put("s", m.state.name)
+            if (m.photoId != null) o.put("photo", m.photoId)
+            metersJson.put(o)
+        }
+
         return TEMPLATE
+            .replace("__METERS__", metersJson.toString())
             .replace("__TRACK__", trackJson.toString())
             .replace("__PHOTOS__", photosJson.toString())
             .replace("__STOPS__", stopsJson.toString())
@@ -63,12 +77,13 @@ object MapHtml {
 </head>
 <body>
 <div id="map"></div>
-<div class="note">الخط الأزرق: مسار GPS، الأحمر: الصور، البرتقالي: توقفات (اضغط عليها)</div>
+<div class="note">الخط الأزرق: مسار GPS، الأحمر: الصور، البرتقالي: توقفات، الدوائر الصغيرة: عدادات الجولة (رمادي لم يُزَر، أخضر مزرق وصول، أخضر صُوِّر، برتقالي بعيد)</div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 var track = __TRACK__;
 var photos = __PHOTOS__;
 var stops = __STOPS__;
+var meters = __METERS__;
 var withImages = __WITH_IMAGES__;
 
 var map = L.map('map');
@@ -78,6 +93,23 @@ L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
 }).addTo(map);
 
 var bounds = [];
+var meterColors = { PENDING: '#98a2b3', ARRIVED: '#0e7490', DONE: '#2e7d32', FLAGGED: '#ef6c00' };
+var meterNames = {
+  PENDING: 'لم يُسجَّل التسليم بعد',
+  ARRIVED: 'وُثّق الوصول، التسليم غير مؤكَّد بعد',
+  DONE: 'صُوِّر',
+  FLAGGED: 'صُوِّر لكن الموقع بعيد عن الإحداثية'
+};
+meters.forEach(function (m) {
+  var c = meterColors[m.s] || '#98a2b3';
+  var mk = L.circleMarker([m.lat, m.lon], {
+    radius: m.s === 'PENDING' ? 5 : 7, color: '#ffffff', weight: 1.5, fillColor: c, fillOpacity: 1
+  }).addTo(map);
+  var html = '<b>العداد ' + m.no + '</b><br>' + (meterNames[m.s] || '');
+  if (withImages && m.photo) html += '<br><img src="images/' + m.photo + '.jpg" style="width:220px;margin-top:6px">';
+  mk.bindPopup(html);
+  if (!track.length) bounds.push([m.lat, m.lon]);
+});
 if (track.length) {
   L.polyline(track, { color: '#1565c0', weight: 4 }).addTo(map);
   bounds = bounds.concat(track);

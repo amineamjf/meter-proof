@@ -8,12 +8,12 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.meterproof.app"
+        applicationId = "com.meterproof.app.v2" // نسخة redesign: تُثبَّت بجانب الأصلية ولا تستبدلها
         minSdk = 28
         targetSdk = 34
         // يزداد مع كل تشغيل على GitHub كي لا يُرفض التحديث كأنه «نسخة أقدم»؛ محليًا 1
         versionCode = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
-        versionName = "0.1.0"
+        versionName = "0.2.0-redesign"
     }
 
     signingConfigs {

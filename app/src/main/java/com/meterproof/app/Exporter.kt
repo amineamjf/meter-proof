@@ -52,7 +52,14 @@ object Exporter {
             }
 
             val stops = StopPairing.pair(store.events())
-            val html = MapHtml.build(store.trackPoints(), store.photoPoints(), stops, withImages = true)
+            val allMeters = try {
+                RoundDb(context).markers()
+            } catch (e: Exception) {
+                emptyList()
+            }
+            val html = MapHtml.build(
+                store.trackPoints(), store.photoPoints(), stops, withImages = true, meters = allMeters
+            )
             write(context, dir, "map.html", "text/html") { out ->
                 out.write(html.toByteArray(Charsets.UTF_8))
             }
@@ -60,7 +67,7 @@ object Exporter {
             // ملخص اليوم الحالي بصيغة PDF (فشله لا يُسقط بقية التصدير)
             try {
                 val (s, e) = Days.range(0)
-                val pdf = summaryPdfBytes(store, s, e, verification)
+                val pdf = summaryPdfBytes(store, s, e, verification, visitedMeters(context, s, e))
                 write(context, dir, "summary_today.pdf", "application/pdf") { out -> out.write(pdf) }
             } catch (ex: Exception) {
                 // نتابع بدون الملخص
@@ -77,7 +84,9 @@ object Exporter {
         context: Context, store: EvidenceStore, dayStartMs: Long, dayEndMs: Long
     ): Result {
         return try {
-            val pdf = summaryPdfBytes(store, dayStartMs, dayEndMs, store.verify())
+            val pdf = summaryPdfBytes(
+                store, dayStartMs, dayEndMs, store.verify(), visitedMeters(context, dayStartMs, dayEndMs)
+            )
             val name = "summary_" + SimpleDateFormat("yyyyMMdd", Locale.US).format(Date(dayStartMs)) + ".pdf"
             write(context, "MeterProof", name, "application/pdf") { out -> out.write(pdf) }
             Result(true, "تم حفظ الملخص: التنزيلات/MeterProof/$name")
@@ -86,8 +95,16 @@ object Exporter {
         }
     }
 
+    /** عدادات الجولة التي زيرت في هذا اليوم فقط (وصول أو تصوير)، كي لا تتضخم خارطة التقرير. */
+    private fun visitedMeters(context: Context, dayStartMs: Long, dayEndMs: Long): List<MeterPoint> = try {
+        RoundDb(context).markers().filter { it.visitedAt in dayStartMs until dayEndMs }
+    } catch (e: Exception) {
+        emptyList()
+    }
+
     private fun summaryPdfBytes(
-        store: EvidenceStore, dayStartMs: Long, dayEndMs: Long, verification: String
+        store: EvidenceStore, dayStartMs: Long, dayEndMs: Long, verification: String,
+        meters: List<MeterPoint> = emptyList()
     ): ByteArray {
         val now = System.currentTimeMillis()
         val summary = DaySummaryBuilder.build(
@@ -98,7 +115,7 @@ object Exporter {
             .map { GeoPoint(it.lat, it.lon) }
         val dayPhotos = store.photoPoints().filter { it.timeMillis in dayStartMs until dayEndMs }
         val bos = ByteArrayOutputStream()
-        PdfReport.write(summary, now, dayTrack, dayPhotos, verification, bos)
+        PdfReport.write(summary, now, dayTrack, dayPhotos, verification, bos, meters)
         return bos.toByteArray()
     }
 

@@ -2,7 +2,7 @@ name: Build APK
 
 on:
   push:
-    branches: [ main, redesign-merged ]
+    branches: [ main, redesign-merged, redesign-final ]
   pull_request:
   workflow_dispatch:
 

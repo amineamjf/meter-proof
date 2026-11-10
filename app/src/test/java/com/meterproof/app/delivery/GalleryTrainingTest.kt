@@ -70,7 +70,14 @@ class GalleryTrainingTest {
         assertTrue(rep.result is InvoiceTrainer.Result.Ready)
         assertTrue(rep.thresholdsFromModel)
         assertEquals(40, rep.trainedOn)
-        assertEquals(0, rep.outcomes.count { it.verdict == Verdict.FALSE_ACCEPT })
+        // عقد المدرّب: دقة 95% على المقبول، لا «صفر قبول خاطئ». أدنى عتبة تحقق 95% مع 20 فاتورة
+        // تسمح بقبول خاطئ واحد (20 من 21)، فالمطلوب هنا أن تحترم الأحكام هذه الدقة.
+        val falseAccepts = rep.outcomes.count { it.verdict == Verdict.FALSE_ACCEPT }
+        val truePositives = rep.outcomes.count { it.verdict == Verdict.CORRECT && it.label == Label.INVOICE }
+        assertTrue("accepted=${truePositives + falseAccepts}", truePositives + falseAccepts > 0)
+        val precision = truePositives.toDouble() / (truePositives + falseAccepts)
+        assertTrue("precision=$precision", precision >= 0.95)
+        assertTrue("falseAccepts=$falseAccepts", falseAccepts <= 1)
         assertTrue("correct=${rep.correct}", rep.correct >= 36)
         assertTrue(rep.outcomes.all { it.score != null && !it.noPaper })
     }

@@ -61,6 +61,9 @@ class MainActivity : Activity() {
     private lateinit var tileDownloadButton: Button
     private lateinit var tileUrlField: EditText
 
+    private var menu: SideMenu? = null
+    private var savedPageId: String? = null
+
     private var imageIndex = -1
     private var shownCount = -1
     private var mapCount = -1
@@ -90,6 +93,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         settings = Settings(this)
         store = EvidenceStore(this)
+        savedPageId = savedInstanceState?.getString("page")
         buildUi()
     }
 
@@ -203,12 +207,12 @@ class MainActivity : Activity() {
         statusView = TextView(this).apply { textSize = 14f }
         col.addView(statusView)
 
-        col.addView(label("1) الإعداد الأول على الهاتف", true))
+        col.addView(label("الإعداد الأول على الهاتف", true))
         col.addView(button("منح الصلاحيات") { requestBase() })
         col.addView(button("استثناء البطارية") { openBatteryExemption() })
         col.addView(button("التشغيل التلقائي (شاومي) / إعدادات التطبيق") { openAutostart() })
 
-        col.addView(label("2) المجال العشوائي وساعات الدوام", true))
+        col.addView(label("المجال العشوائي وساعات الدوام", true))
         col.addView(label("الحد الأدنى بين صورتين (دقائق)"))
         minField = numberField(settings.minMinutes).also { col.addView(it) }
         col.addView(label("الحد الأقصى بين صورتين (دقائق)"))
@@ -229,17 +233,14 @@ class MainActivity : Activity() {
         updatePhotoOnStopText()
         col.addView(button("حفظ الإعدادات") { saveSettings(true) })
 
-        col.addView(label("3) الجلسة", true))
+        col.addView(label("الجلسة", true))
         col.addView(button("بدء الجلسة") { startSession() })
         col.addView(button("إيقاف الجلسة") { CaptureService.stop(this); delayedRefresh() })
         pauseButton = button("إيقاف مؤقت") { togglePause() }
         col.addView(pauseButton)
         col.addView(button("صورة الآن (تُحفظ مع الموقع)") { testCapture() })
 
-        col.addView(label("4) الأدلة المحفوظة (بعد التشويه)", true))
-        col.addView(button("التحقق من سلسلة البصمات") { verifyView.text = store.verify() })
-        verifyView = TextView(this).apply { textSize = 14f }
-        col.addView(verifyView)
+        col.addView(label("الأدلة المحفوظة (بعد التشويه)", true))
 
         previewView = ImageView(this).apply {
             adjustViewBounds = true
@@ -260,7 +261,17 @@ class MainActivity : Activity() {
         nav.addView(next, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         col.addView(nav)
 
-        col.addView(label("5) الخارطة والتصدير", true))
+        col.addView(button("معرض الصور وتصنيفها للتدريب") {
+            startActivity(Intent(this, PhotoGalleryActivity::class.java))
+        })
+
+        // أداة تجربة موجودة في نسخة debug فقط؛ إن غابت الشاشة (نسخة release) لا يظهر الزر
+        val galleryIntent = Intent().setClassName(packageName, "com.meterproof.app.GalleryActivity")
+        if (galleryIntent.resolveActivity(packageManager) != null) {
+            col.addView(button("🧪 معرض الصور ومشاركتها (للتجربة فقط)") { startActivity(galleryIntent) })
+        }
+
+        col.addView(label("الخارطة", true))
         col.addView(label("المسار الأزرق: GPS، الدوائر الحمراء: الصور (اضغط دائرة لعرض صورتها)، المربعات البرتقالية: توقفات، الدوائر الملوّنة الصغيرة: عدادات الجولة بحسب حالتها (اضغط عدادًا لتفاصيله)"))
         mapView = TrackMapView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
@@ -293,20 +304,15 @@ class MainActivity : Activity() {
         col.addView(button("حفظ رابط البلاطات") { saveTileUrl() })
         col.addView(button("حذف الخارطة المخزّنة") { confirmClearTiles() })
         col.addView(button("فتح خارطة الإنترنت في المتصفح (احتياطي)") { openMapInBrowser() })
+
+        col.addView(label("التصدير والتحقق", true))
         exportButton = button("تصدير الصور والسجلات إلى التنزيلات") { doExport() }
         col.addView(exportButton)
+        col.addView(button("التحقق من سلسلة البصمات") { verifyView.text = store.verify() })
+        verifyView = TextView(this).apply { textSize = 14f }
+        col.addView(verifyView)
 
-        col.addView(button("معرض الصور وتصنيفها للتدريب") {
-            startActivity(Intent(this, PhotoGalleryActivity::class.java))
-        })
-
-        // أداة تجربة موجودة في نسخة debug فقط؛ إن غابت الشاشة (نسخة release) لا يظهر الزر
-        val galleryIntent = Intent().setClassName(packageName, "com.meterproof.app.GalleryActivity")
-        if (galleryIntent.resolveActivity(packageManager) != null) {
-            col.addView(button("🧪 معرض الصور ومشاركتها (للتجربة فقط)") { startActivity(galleryIntent) })
-        }
-
-        col.addView(label("6) ملخص اليوم", true))
+        col.addView(label("ملخص اليوم", true))
         val dayNav = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         dayNav.addView(
             button("اليوم السابق") { dayOffset--; renderSummary() },
@@ -327,22 +333,77 @@ class MainActivity : Activity() {
         col.addView(summaryView)
         col.addView(button("تصدير ملخص اليوم (PDF) إلى التنزيلات") { exportSummary() })
 
-        col.addView(label("7) جولة العدادات", true))
+        col.addView(label("جولة العدادات", true))
         col.addView(label("استيراد ملف الجولة، قائمة العدادات الأقرب إليك، وتصوير عداد يربط الصورة والموقع به"))
         col.addView(button("فتح جولة العدادات") {
             startActivity(Intent(this, RoundActivity::class.java))
         })
 
-        col.addView(label("8) كشف تسليم الفواتير", true))
+        col.addView(label("كشف تسليم الفواتير", true))
         col.addView(label("معايرة الكاشف على أوراقك، تدريبه، وتفعيله (مغلق افتراضيًا). لا تُحفظ صور للمعايرة"))
         col.addView(button("فتح كشف تسليم الفواتير") {
             startActivity(Intent(this, DeliveryActivity::class.java))
         })
 
-        setContentView(ScrollView(this).apply {
+        // بطاقات الأقسام (كل قسم بطاقة)، تُوزَّع على صفحات القائمة الجانبية. لا يتغير أي عنصر ولا سلوكه.
+        groupIntoCards(col)
+        val cards = (0 until col.childCount).map { col.getChildAt(it) }
+        col.removeAllViews()
+
+        fun pageContainer() = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
             setBackgroundColor(cBg)
-            addView(groupIntoCards(col))
-        })
+            setPadding(dp(16), dp(4), dp(16), dp(32))
+        }
+
+        val assignment = NavPages.assign(cards.size)
+        val dests: List<SideMenu.Dest>
+        if (assignment == null) {
+            // أمان: عدد البطاقات لا يطابق NavPages (تعديل لاحق على الأقسام)، فتُعرض كلها في صفحة واحدة
+            // ولا يُخفى أي زر.
+            val all = pageContainer()
+            cards.forEach { all.addView(it) }
+            dests = listOf(SideMenu.Dest(NavPages.Page.HOME.id, NavPages.Page.HOME.title, all))
+        } else {
+            val containers = NavPages.Page.values().associateWith { pageContainer() }
+            cards.forEachIndexed { i, card -> containers.getValue(assignment[i]).addView(card) }
+            containers.getValue(NavPages.Page.HOME).addView(buildShortcutsCard())
+            dests = NavPages.Page.values().map {
+                SideMenu.Dest(it.id, it.title, containers.getValue(it))
+            }
+        }
+
+        val startId = NavPages.fromId(savedPageId).id
+        val sideMenu = SideMenu(this, dests, if (dests.any { it.id == startId }) startId else dests.first().id)
+        menu = sideMenu
+        setContentView(sideMenu.root)
+    }
+
+    /** بطاقة اختصارات في الرئيسية: فتح الشاشات الأكثر استعمالًا مباشرة، أو الانتقال إلى صفحة. */
+    private fun buildShortcutsCard(): View {
+        val sc = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        sc.addView(label("اختصارات", true))
+        sc.addView(button("الخارطة بملء الشاشة") { startActivity(Intent(this, MapActivity::class.java)) })
+        sc.addView(button("معرض الصور وتصنيفها للتدريب") { startActivity(Intent(this, PhotoGalleryActivity::class.java)) })
+        sc.addView(button("جولة العدادات") { startActivity(Intent(this, RoundActivity::class.java)) })
+        sc.addView(button("كشف تسليم الفواتير") { startActivity(Intent(this, DeliveryActivity::class.java)) })
+        sc.addView(button("التصدير والتحقق") { menu?.show(NavPages.Page.EXPORT.id) })
+        sc.addView(button("الإعدادات") { menu?.show(NavPages.Page.SETTINGS.id) })
+        groupIntoCards(sc)
+        val card = sc.getChildAt(0)
+        sc.removeView(card)
+        return card
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        menu?.let { outState.putString("page", it.currentId) }
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onBackPressed() {
+        if (menu?.handleBack(NavPages.Page.HOME.id) != true) super.onBackPressed()
     }
 
     // ---------------------------------------------------------------- الحالة

@@ -2,7 +2,7 @@
 
 آخر تحديث: 10 نوفمبر 2026. هذا الملف يشرح أين وصلنا وما اتُّفق عليه، ليكمل أي حساب أو مطوّر دون البدء من الصفر.
 
-> **ابدأ من [docs/ROADMAP.md](docs/ROADMAP.md):** فيه كل ما طلبه المالك بحالة كل بند، والترتيب المقترح، وخطوات إكمال الزميل للعمل. **فرع العمل الحالي هو `feature/online-tiles`** (لا `redesign-merged`).
+> **ابدأ من [docs/ROADMAP.md](docs/ROADMAP.md):** فيه كل ما طلبه المالك بحالة كل بند، والترتيب المقترح، وخطوات إكمال الزميل للعمل. **فرع العمل الحالي هو `feature/photo-gallery`** (لا `online-tiles` ولا `redesign-merged`).
 
 > **تصحيح:** نسخة سابقة من هذا الملف (على الفرع `redesign`) قالت إن كشف الفاتورة والتدريب عليه غير موجودين. هذا خطأ. هما موجودان في الفرع `feature/delivery-detection`، وهذا الفرع الحالي يضمّهما.
 
@@ -23,7 +23,7 @@
 | `redesign` | البطاقات، بيانات الزبون، الوصول الموثّق، منع التصوير أثناء المشي | يبدأ من `main` ولا يحوي الكشف |
 | `redesign-merged` | دمج `redesign` في `feature/offline-map` (الكشف وبوابة الخصوصية وخارطة MBTiles والتوقيع الثابت) | سابق، تجاوزه الفرع التالي |
 | `merge/faces-plus-redesign` | `redesign-merged` مع وضع «الوجوه فقط» وتحسينات الجولة والخارطة (أحدث عمل قبل بلاطات الخارطة) | الأساس لما بعده |
-| **`feature/online-tiles`** | `merge/faces-plus-redesign` مع **بلاطات الخارطة بآلية smart-remplacement** وإزالة استيراد MBTiles، ووثائق `ROADMAP.md` و`MAP_TILES.md` | **هذا هو فرع العمل الحالي** |
+| **`feature/online-tiles`** | `merge/faces-plus-redesign` مع **بلاطات الخارطة بآلية smart-remplacement** وإزالة استيراد MBTiles، ووثائق `ROADMAP.md` و`MAP_TILES.md` | أساس الخطوات، وفرع العمل الحالي هو `feature/photo-gallery` |
 | `feature/offline-tiles` | محاولة سابقة بُنيت على `main` القديم بنظام آخر | **متجاوَز، لا يُستعمل** |
 
 لم يُحذف ولم يُعدَّل أي فرع قائم. الفرع `redesign-merged` جديد.

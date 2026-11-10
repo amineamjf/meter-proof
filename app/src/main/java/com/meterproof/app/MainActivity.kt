@@ -296,6 +296,10 @@ class MainActivity : Activity() {
         exportButton = button("تصدير الصور والسجلات إلى التنزيلات") { doExport() }
         col.addView(exportButton)
 
+        col.addView(button("معرض الصور وتصنيفها للتدريب") {
+            startActivity(Intent(this, PhotoGalleryActivity::class.java))
+        })
+
         // أداة تجربة موجودة في نسخة debug فقط؛ إن غابت الشاشة (نسخة release) لا يظهر الزر
         val galleryIntent = Intent().setClassName(packageName, "com.meterproof.app.GalleryActivity")
         if (galleryIntent.resolveActivity(packageManager) != null) {

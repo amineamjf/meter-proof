@@ -52,6 +52,11 @@
             android:label="كشف تسليم الفواتير" />
 
         <activity
+            android:name=".PhotoGalleryActivity"
+            android:exported="false"
+            android:label="معرض الصور" />
+
+        <activity
             android:name=".MapActivity"
             android:exported="false"
             android:label="الخارطة" />

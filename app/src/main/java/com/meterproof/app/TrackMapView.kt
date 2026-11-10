@@ -6,7 +6,9 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Rect
 import android.graphics.RectF
+import android.os.SystemClock
 import android.util.LruCache
 import android.view.GestureDetector
 import android.view.MotionEvent
@@ -22,7 +24,8 @@ import kotlin.math.pow
 
 /**
  * الخارطة داخل التطبيق: المسار (أزرق) وأماكن الصور (دوائر حمراء) والتوقفات (مربعات برتقالية).
- * إن استُورد ملف خارطة محلي (MapPack) رُسمت شوارعه تحت ذلك دون إنترنت، وإلا تبقى الخلفية فارغة.
+ * تحت ذلك بلاطات الخارطة (مخطط أو قمر صناعي): تُقرأ من مخزن الجهاز دون إنترنت، وما ليس فيه
+ * يُجلب ويُخزَّن إن وُجد اتصال (نفس آلية خارطة smart-remplacement). دون اتصال وبلا مخزون تبقى الخلفية فارغة.
  *
  * interactive = false: عرض ثابت يلائم نفسه مع النقاط ويترك التمرير للصفحة (الشاشة الرئيسية).
  * interactive = true: تحريك بإصبع وتكبير بإصبعين أو بنقرتين (شاشة الخارطة الكاملة).
@@ -58,7 +61,9 @@ class TrackMapView(context: Context, private val interactive: Boolean = false) :
     private var cyPx = 0.0
 
     // ---- البلاطات
-    @Volatile private var tiles: MbTiles? = null
+    /** قالب رابط الطبقة الحالية، ورقم يتغير مع كل تبديل طبقة كي لا تُرسم نتائج طبقة قديمة. */
+    @Volatile private var tileTemplate: String = TileLayers.PLAN
+    @Volatile private var layerGen = 0
     private var io: ExecutorService? = null
     private val cache = object : LruCache<Long, Bitmap>(
         (Runtime.getRuntime().maxMemory() / 8 / 1024).toInt().coerceIn(4 * 1024, 48 * 1024)
@@ -66,12 +71,12 @@ class TrackMapView(context: Context, private val interactive: Boolean = false) :
         override fun sizeOf(key: Long, value: Bitmap): Int = value.byteCount / 1024
     }
     private val pending = HashSet<Long>()
-    private val missing = HashSet<Long>()
-    private val decodeOpts = BitmapFactory.Options().apply {
-        inPreferredConfig = Bitmap.Config.RGB_565
-    }
+
+    /** بلاطات فشل جلبها (دون اتصال أو خطأ): لا نعيد المحاولة قبل مرور RETRY_MS كي لا نطرق الشبكة باستمرار. */
+    private val failedAt = HashMap<Long, Long>()
     private val tilePaint = Paint(Paint.FILTER_BITMAP_FLAG)
     private val rect = RectF()
+    private val srcRect = Rect()
     private val attrPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#37474F")
         textSize = 10f * density
@@ -154,26 +159,36 @@ class TrackMapView(context: Context, private val interactive: Boolean = false) :
         invalidate()
     }
 
-    /** يعيد تحميل ملف الخارطة المحلية (بعد استيراده أو حذفه). */
-    fun reloadTiles() {
-        val old = tiles
-        tiles = null
+    /** يعيد قراءة الطبقة المختارة ويفرغ الذاكرة (بعد تبديل الطبقة أو الرابط أو حذف المخزن). */
+    fun refreshTiles() {
+        val st = Settings(context)
+        tileTemplate = TileLayers.resolve(st.tileUrl, st.tileSat)
+        layerGen++
         cache.evictAll()
         pending.clear()
-        missing.clear()
-        if (old != null) executor()?.execute { old.close() }
+        failedAt.clear()
         invalidate()
-        if (!MapPack.exists(context)) return
-        executor()?.execute {
-            val r = MbTiles.open(MapPack.file(context))
-            post {
-                if (r is MbTiles.OpenResult.Ok) {
-                    tiles = r.tiles
-                    if (autoFit) needFit = true
-                    invalidate()
-                }
-            }
-        }
+    }
+
+    /** يبدّل بين المخطط والقمر الصناعي. يعيد false إن كان رابط مخصص مضبوطًا (له الأولوية). */
+    fun toggleSatellite(): Boolean {
+        val st = Settings(context)
+        if (st.tileUrl.isNotBlank()) return false
+        st.tileSat = !st.tileSat
+        refreshTiles()
+        return true
+    }
+
+    /** المنطقة الظاهرة الآن (لتحميلها)، أو null قبل توفر بيانات. */
+    fun visibleBox(): GeoBox? {
+        if (!hasData || width == 0 || height == 0) return null
+        val cx = TileMath.lonToX(centerLon, zoom, tilePx)
+        val cy = TileMath.latToY(centerLat, zoom, tilePx)
+        val west = TileMath.xToLon(cx - width / 2.0, zoom, tilePx).coerceIn(-180.0, 180.0)
+        val east = TileMath.xToLon(cx + width / 2.0, zoom, tilePx).coerceIn(-180.0, 180.0)
+        val north = TileMath.yToLat(cy - height / 2.0, zoom, tilePx).coerceIn(-TileMath.MAX_LAT, TileMath.MAX_LAT)
+        val south = TileMath.yToLat(cy + height / 2.0, zoom, tilePx).coerceIn(-TileMath.MAX_LAT, TileMath.MAX_LAT)
+        return GeoBox(south, north, west, east)
     }
 
     /** يعيد الكاميرا لتلائم كل النقاط. */
@@ -192,29 +207,16 @@ class TrackMapView(context: Context, private val interactive: Boolean = false) :
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
-        reloadTiles()
+        refreshTiles()
     }
 
     override fun onDetachedFromWindow() {
-        val t = tiles
-        tiles = null
+        layerGen++
         cache.evictAll()
         pending.clear()
-        missing.clear()
-        val ex = io
+        failedAt.clear()
+        io?.shutdown()
         io = null
-        if (ex != null) {
-            if (t != null) {
-                try {
-                    ex.execute { t.close() }
-                } catch (e: Exception) {
-                    // لا شيء
-                }
-            }
-            ex.shutdown()
-        } else {
-            t?.close()
-        }
         super.onDetachedFromWindow()
     }
 
@@ -225,11 +227,9 @@ class TrackMapView(context: Context, private val interactive: Boolean = false) :
 
     // ---------------------------------------------------------------- الكاميرا
 
-    private fun minZoomAllowed(): Double =
-        (tiles?.let { it.minZoom - 1.0 } ?: 2.0).coerceAtLeast(2.0)
+    private fun minZoomAllowed(): Double = MIN_Z.toDouble()
 
-    private fun maxZoomAllowed(): Double =
-        (tiles?.let { it.maxZoom + 2.0 } ?: 19.0).coerceAtMost(21.0)
+    private fun maxZoomAllowed(): Double = MAX_Z.toDouble()
 
     private fun fitToData() {
         val pts = ArrayList<GeoPoint>(track.size + photos.size + stops.size)
@@ -285,7 +285,7 @@ class TrackMapView(context: Context, private val interactive: Boolean = false) :
     private fun executor(): ExecutorService? {
         var ex = io
         if (ex == null) {
-            ex = Executors.newSingleThreadExecutor()
+            ex = Executors.newFixedThreadPool(3)
             io = ex
         }
         return ex
@@ -294,14 +294,42 @@ class TrackMapView(context: Context, private val interactive: Boolean = false) :
     private fun key(z: Int, x: Int, y: Int): Long =
         (z.toLong() shl 50) or (x.toLong() shl 25) or y.toLong()
 
-    private fun request(mb: MbTiles, z: Int, x: Int, y: Int, key: Long) {
-        if (key in missing || !pending.add(key)) return
+    /**
+     * يجلب بلاطة في الخلفية: من مخزن الجهاز أولًا، وإن لم توجد ويوجد اتصال تُجلب وتُخزَّن.
+     * لا يُطلب شيء من الشبكة إن كانت البلاطة مخزّنة.
+     */
+    private fun request(z: Int, x: Int, y: Int, key: Long) {
+        val failed = failedAt[key]
+        if (failed != null && SystemClock.uptimeMillis() - failed < RETRY_MS) return
+        if (!pending.add(key)) return
+        val gen = layerGen
+        val template = tileTemplate
+        val app = context.applicationContext
         try {
             executor()?.execute {
-                val bytes = mb.tile(z, x, y)
-                val bmp = if (bytes != null) {
+                val k = TileLayers.key(template, z, x, y)
+                var bytes: ByteArray? = try {
+                    TileCache.get(app).get(k)
+                } catch (e: Exception) {
+                    null
+                }
+                if (bytes == null && Net.online(app)) {
+                    val r = HttpTileFetcher().fetch(TileLayers.build(template, z, x, y))
+                    val b = r.bytes
+                    if (r.status == 200 && b != null && ImageSniffer.isImage(b)) {
+                        bytes = b
+                        try {
+                            TileCache.get(app).put(k, b)
+                        } catch (e: Exception) {
+                            // العرض يعمل حتى لو تعذّر الحفظ
+                        }
+                    }
+                }
+                val data = bytes
+                val bmp = if (data != null) {
                     try {
-                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOpts)
+                        val opts = BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.RGB_565 }
+                        BitmapFactory.decodeByteArray(data, 0, data.size, opts)
                     } catch (e: Throwable) {
                         null
                     }
@@ -310,12 +338,12 @@ class TrackMapView(context: Context, private val interactive: Boolean = false) :
                 }
                 post {
                     pending.remove(key)
-                    if (tiles === mb) {
+                    if (gen == layerGen) {
                         if (bmp != null) {
                             cache.put(key, bmp)
                             invalidate()
                         } else {
-                            missing.add(key)
+                            failedAt[key] = SystemClock.uptimeMillis()
                         }
                     }
                 }
@@ -326,8 +354,7 @@ class TrackMapView(context: Context, private val interactive: Boolean = false) :
     }
 
     private fun drawTiles(canvas: Canvas, w: Float, h: Float) {
-        val mb = tiles ?: return
-        val z = floor(zoom + 0.5).toInt().coerceIn(mb.minZoom, mb.maxZoom)
+        val z = floor(zoom + 0.5).toInt().coerceIn(MIN_Z, MAX_Z)
         val dst = tilePx * 2.0.pow(zoom - z)
         val xr = TileMath.tileRange(cxPx, w.toDouble(), dst, z)
         val yr = TileMath.tileRange(cyPx, h.toDouble(), dst, z)
@@ -335,22 +362,32 @@ class TrackMapView(context: Context, private val interactive: Boolean = false) :
         for (ty in yr) {
             for (tx in xr) {
                 val k = key(z, tx, ty)
+                val left = (w / 2.0 + tx * dst - cxPx).toFloat()
+                val top = (h / 2.0 + ty * dst - cyPx).toFloat()
+                rect.set(left, top, left + size, top + size)
                 val bmp = cache.get(k)
                 if (bmp != null) {
-                    val left = (w / 2.0 + tx * dst - cxPx).toFloat()
-                    val top = (h / 2.0 + ty * dst - cyPx).toFloat()
-                    rect.set(left, top, left + size, top + size)
                     canvas.drawBitmap(bmp, null, rect, tilePaint)
                 } else {
-                    request(mb, z, tx, ty, k)
+                    // أثناء التحميل: ربع بلاطة الأب (الأقل دقة) إن كانت جاهزة بدل فراغ
+                    if (z > MIN_Z) {
+                        val parent = cache.get(key(z - 1, tx shr 1, ty shr 1))
+                        if (parent != null) {
+                            val half = parent.width / 2
+                            val sx = (tx and 1) * half
+                            val sy = (ty and 1) * half
+                            srcRect.set(sx, sy, sx + half, sy + half)
+                            canvas.drawBitmap(parent, srcRect, rect, tilePaint)
+                        }
+                    }
+                    request(z, tx, ty, k)
                 }
             }
         }
     }
 
     private fun drawAttribution(canvas: Canvas, w: Float, h: Float) {
-        val text = tiles?.attribution ?: return
-        if (text.isEmpty()) return
+        val text = TileLayers.attribution(tileTemplate)
         val tw = attrPaint.measureText(text)
         val right = w - 6f * density
         val bottom = h - 4f * density
@@ -450,4 +487,10 @@ class TrackMapView(context: Context, private val interactive: Boolean = false) :
     }
 
     override fun performClick(): Boolean = super.performClick()
+
+    private companion object {
+        const val MIN_Z = 10
+        const val MAX_Z = 19
+        const val RETRY_MS = 20_000L
+    }
 }

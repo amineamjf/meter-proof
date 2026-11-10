@@ -57,10 +57,9 @@ class MainActivity : Activity() {
     private lateinit var privacyModeButton: Button
     private lateinit var dayLabel: TextView
     private lateinit var summaryView: TextView
-    private lateinit var mapPackView: TextView
-
-    @Volatile private var importNote: String? = null
-    private var importing = false
+    private lateinit var tileInfoView: TextView
+    private lateinit var tileDownloadButton: Button
+    private lateinit var tileUrlField: EditText
 
     private var imageIndex = -1
     private var shownCount = -1
@@ -84,7 +83,6 @@ class MainActivity : Activity() {
     private companion object {
         const val REQ_EXPORT = 3
         const val REQ_SUMMARY = 4
-        const val REQ_MAP_IMPORT = 5
         const val HEADING_TAG = "heading"
     }
 
@@ -272,13 +270,25 @@ class MainActivity : Activity() {
         col.addView(button("فتح الخارطة بملء الشاشة (تحريك وتكبير)") {
             startActivity(Intent(this, MapActivity::class.java))
         })
-        mapPackView = TextView(this).apply {
+        tileInfoView = TextView(this).apply {
             textSize = 13f
             setPadding(0, dp(8), 0, dp(4))
         }
-        col.addView(mapPackView)
-        col.addView(button("استيراد ملف خارطة محلية (MBTiles)") { pickMapFile() })
-        col.addView(button("حذف الخارطة المحلية") { confirmDeleteMap() })
+        col.addView(tileInfoView)
+        tileDownloadButton = button("تحميل الخارطة حول العدادات والمسار (للعمل دون إنترنت)") { onTileDownloadClick() }
+        col.addView(tileDownloadButton)
+        col.addView(button("تبديل الطبقة: مخطط / قمر صناعي") { toggleLayer() })
+        col.addView(label("رابط بلاطات مخصص (اختياري، يتجاوز الطبقتين الافتراضيتين)"))
+        tileUrlField = EditText(this).apply {
+            hint = "https://…/{z}/{x}/{y}.png?key=…"
+            setText(settings.tileUrl)
+            inputType = InputType.TYPE_TEXT_VARIATION_URI
+            isSingleLine = true
+            textDirection = View.TEXT_DIRECTION_LTR
+        }
+        col.addView(tileUrlField)
+        col.addView(button("حفظ رابط البلاطات") { saveTileUrl() })
+        col.addView(button("حذف الخارطة المخزّنة") { confirmClearTiles() })
         col.addView(button("فتح خارطة الإنترنت في المتصفح (احتياطي)") { openMapInBrowser() })
         exportButton = button("تصدير الصور والسجلات إلى التنزيلات") { doExport() }
         col.addView(exportButton)
@@ -372,7 +382,7 @@ class MainActivity : Activity() {
         statusView.text = sb.toString()
 
         pauseButton.text = if (settings.paused) "استئناف التصوير" else "إيقاف مؤقت"
-        mapPackView.text = importNote ?: MapPack.describe(this)
+        updateTileUi()
 
         val count = store.count()
         if (count != shownCount) {
@@ -611,76 +621,70 @@ class MainActivity : Activity() {
         }.start()
     }
 
-    private fun pickMapFile() {
-        if (importing) {
-            toast("جارٍ استيراد ملف، انتظر حتى ينتهي")
+    // ---------------------------------------------------------------- بلاطات الخارطة
+
+    private fun updateTileUi() {
+        val st = TileTransfer.status
+        tileInfoView.text = st ?: TileTransfer.describe(this)
+        tileDownloadButton.text = if (TileTransfer.running) {
+            "إلغاء التحميل الجاري"
+        } else {
+            "تحميل الخارطة حول العدادات والمسار (للعمل دون إنترنت)"
+        }
+    }
+
+    /** نقاط العمل: المسار والصور وعدادات الجولة (دون الصفر المجهول). */
+    private fun workPoints(): List<Pair<Double, Double>> {
+        val pts = ArrayList<Pair<Double, Double>>()
+        for (p in store.trackPoints()) pts.add(Pair(p.lat, p.lon))
+        for (p in store.photoPoints()) pts.add(Pair(p.lat, p.lon))
+        try {
+            for (m in roundDb.markers()) pts.add(Pair(m.lat, m.lon))
+        } catch (e: Exception) {
+            // بلا جولة
+        }
+        return pts.filter { !(it.first == 0.0 && it.second == 0.0) }
+    }
+
+    private fun onTileDownloadClick() {
+        if (TileTransfer.running) {
+            TileTransfer.cancel()
             return
         }
-        val pick = Intent(Intent.ACTION_OPEN_DOCUMENT)
-            .addCategory(Intent.CATEGORY_OPENABLE)
-            .setType("*/*")
-        try {
-            startActivityForResult(pick, REQ_MAP_IMPORT)
-        } catch (e: Exception) {
-            toast("لا يوجد تطبيق ملفات لاختيار الملف")
+        TileTransfer.confirmAndDownload(this, TilePlans.around(workPoints())) {
+            updateTileUi()
+            if (!TileTransfer.running) mapView.refreshTiles()
         }
     }
 
-    @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != REQ_MAP_IMPORT || resultCode != RESULT_OK) return
-        val uri = data?.data ?: return
-        try {
-            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        } catch (e: Exception) {
-            // الإذن المؤقت يكفي لنسخ فوري
-        }
-        startMapImport(uri)
-    }
-
-    /** ينسخ الملف إلى مساحة التطبيق على خيط خلفي ثم يحدّث الخارطة. لا يمسّ الخارطة السابقة إن فشل. */
-    private fun startMapImport(uri: Uri) {
-        importing = true
-        importNote = "جارٍ نسخ الخارطة... لا تُغلق التطبيق"
-        mapPackView.text = importNote
-        val mb = 1024L * 1024L
-        Thread {
-            val result = MapPack.importFrom(this, uri) { done, total ->
-                val note = if (total > 0) {
-                    "جارٍ النسخ: ${done * 100 / total}% (${done / mb} من ${total / mb} ميغابايت)"
-                } else {
-                    "جارٍ النسخ: ${done / mb} ميغابايت"
-                }
-                importNote = note
-                runOnUiThread { mapPackView.text = note }
-            }
-            runOnUiThread {
-                importing = false
-                importNote = null
-                when (result) {
-                    is MapPack.Result.Ok -> {
-                        toast("تم استيراد الخارطة. يمكنك حذف الملف الأصلي لتوفير المساحة")
-                        mapView.reloadTiles()
-                    }
-                    is MapPack.Result.Fail -> toast("تعذّر الاستيراد: ${result.message}")
-                }
-                mapPackView.text = MapPack.describe(this)
-            }
-        }.start()
-    }
-
-    private fun confirmDeleteMap() {
-        if (!MapPack.exists(this)) {
-            toast("لا توجد خارطة محلية")
+    private fun toggleLayer() {
+        if (!mapView.toggleSatellite()) {
+            toast("رابط بلاطات مخصص مضبوط، فهو الطبقة المعتمدة. امسحه واحفظ للتبديل")
             return
         }
+        updateTileUi()
+    }
+
+    private fun saveTileUrl() {
+        val url = tileUrlField.text.toString().trim()
+        val err = TileLayers.validate(url)
+        if (err != null) {
+            toast(err)
+            return
+        }
+        settings.tileUrl = url
+        mapView.refreshTiles()
+        updateTileUi()
+        toast(if (url.isEmpty()) "عاد التطبيق إلى الطبقات الافتراضية" else "حُفظ رابط البلاطات")
+    }
+
+    private fun confirmClearTiles() {
         android.app.AlertDialog.Builder(this)
-            .setMessage("حذف الخارطة المحلية؟ يمكنك استيرادها من جديد من الملف الأصلي.")
+            .setMessage("حذف كل البلاطات المخزّنة؟ تُجلب من جديد عند الحاجة إن وُجد اتصال.")
             .setPositiveButton("حذف") { _, _ ->
-                MapPack.delete(this)
-                mapView.reloadTiles()
-                mapPackView.text = MapPack.describe(this)
+                TileTransfer.clear(this)
+                mapView.refreshTiles()
+                updateTileUi()
             }
             .setNegativeButton("إلغاء", null)
             .show()

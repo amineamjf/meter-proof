@@ -42,9 +42,6 @@ object TileMath {
         return Math.toDegrees(atan(sinh(n)))
     }
 
-    /** MBTiles يخزّن الصف بنظام TMS (الصفر من الجنوب) بينما XYZ من الشمال. */
-    fun tmsRow(zoom: Int, yXyz: Int): Int = (1 shl zoom) - 1 - yXyz
-
     /** المتر لكل بكسل شاشة عند خط العرض والتكبير المعطيين. */
     fun metersPerPixel(lat: Double, zoom: Double, tilePx: Double): Double =
         EARTH_CIRCUMFERENCE_M * cos(Math.toRadians(lat)) / worldSize(zoom, tilePx)

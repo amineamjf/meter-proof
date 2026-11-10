@@ -40,15 +40,6 @@ class TileMathTest {
     }
 
     @Test
-    fun tmsRowFlipsTheYAxis() {
-        assertEquals(0, TileMath.tmsRow(0, 0))
-        assertEquals(3, TileMath.tmsRow(2, 0))
-        assertEquals(0, TileMath.tmsRow(2, 3))
-        assertEquals(1, TileMath.tmsRow(2, 2))
-        assertEquals((1 shl 16) - 1, TileMath.tmsRow(16, 0))
-    }
-
-    @Test
     fun metersPerPixelShrinksWithZoomAndLatitude() {
         // عند خط الاستواء والتكبير 0 وبلاطة 256 نقطة: المحيط / 256
         assertEquals(156543.03392, TileMath.metersPerPixel(0.0, 0.0, tile), 0.01)

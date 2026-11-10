@@ -13,6 +13,7 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 
 /**
  * الخارطة بملء الشاشة: تحريك بإصبع، تكبير بإصبعين أو بنقرتين، وضغط دائرة لعرض صورتها.
@@ -25,6 +26,7 @@ class MapActivity : Activity() {
     private lateinit var previewBox: LinearLayout
     private lateinit var previewImage: ImageView
     private lateinit var previewText: TextView
+    private lateinit var downloadButton: Button
 
     private var shownCount = -1
     private var shownTrack = -1
@@ -71,6 +73,13 @@ class MapActivity : Activity() {
         bar.addView(barButton("＋") { map.zoomBy(1.0) })
         bar.addView(barButton("－") { map.zoomBy(-1.0) })
         bar.addView(barButton("تمركز") { map.recenter() })
+        bar.addView(barButton("الطبقة") {
+            if (!map.toggleSatellite()) {
+                Toast.makeText(this, "رابط بلاطات مخصص مضبوط، فهو الطبقة المعتمدة. امسحه من الشاشة الرئيسية للتبديل", Toast.LENGTH_LONG).show()
+            }
+        })
+        downloadButton = barButton("⬇ تحميل") { onDownloadClick() }
+        bar.addView(downloadButton)
         root.addView(
             bar,
             FrameLayout.LayoutParams(
@@ -111,7 +120,26 @@ class MapActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        updateDownloadUi()
         handler.post(ticker)
+    }
+
+    /** يحمّل المنطقة الظاهرة على الخارطة للعمل دون إنترنت، أو يلغي تحميلًا جاريًا. */
+    private fun onDownloadClick() {
+        if (TileTransfer.running) {
+            TileTransfer.cancel()
+            return
+        }
+        TileTransfer.confirmAndDownload(this, map.visibleBox()) { updateDownloadUi() }
+    }
+
+    private fun updateDownloadUi() {
+        if (TileTransfer.running) {
+            downloadButton.text = "إلغاء (${TileTransfer.status ?: ""})"
+        } else {
+            downloadButton.text = "⬇ تحميل"
+            map.refreshTiles()
+        }
     }
 
     override fun onPause() {

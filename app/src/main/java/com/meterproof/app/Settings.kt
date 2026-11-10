@@ -35,10 +35,15 @@ class Settings(context: Context) {
         get() = sp.getBoolean("active", false)
         set(v) = sp.edit().putBoolean("active", v).apply()
 
-    /** معلومات الخارطة المحلية المستوردة للعرض: الاسم|أدنى تكبير|أقصى تكبير (فارغ = لا خارطة) */
-    var mapPackInfo: String
-        get() = sp.getString("mapPackInfo", "") ?: ""
-        set(v) = sp.edit().putString("mapPackInfo", v).apply()
+    /** رابط بلاطات مخصص (https وفيه {z} و{x} و{y}). فارغ = الطبقات الافتراضية (مخطط أو قمر صناعي) */
+    var tileUrl: String
+        get() = sp.getString("tileUrl", "") ?: ""
+        set(v) = sp.edit().putString("tileUrl", v.trim()).apply()
+
+    /** طبقة القمر الصناعي بدل المخطط (تُستعمل حين لا يوجد رابط مخصص) */
+    var tileSat: Boolean
+        get() = sp.getBoolean("tileSat", false)
+        set(v) = sp.edit().putBoolean("tileSat", v).apply()
 
     /** هل عملت الجلسة الحالية داخل ساعات الدوام (يُحفظ كي يصمد عبر إعادة تشغيل الخدمة) */
     var workedThisSession: Boolean

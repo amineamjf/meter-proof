@@ -87,9 +87,12 @@ class Settings(context: Context) {
         get() = sp.getInt("stopAfter", 30)
         set(v) = sp.edit().putInt("stopAfter", v).apply()
 
-    /** التقاط صورة تلقائيًا عند بداية كل توقف طويل (مغلق افتراضيًا) */
+    /**
+     * التقاط صورة تلقائيًا عند بداية كل توقف طويل ولو لم تُستورد قاعدة بيانات للحي.
+     * مفعّل افتراضيًا للتثبيتات الجديدة (من اختار غير ذلك سابقًا تبقى قيمته).
+     */
     var photoOnStop: Boolean
-        get() = sp.getBoolean("photoOnStop", false)
+        get() = sp.getBoolean("photoOnStop", true)
         set(v) = sp.edit().putBoolean("photoOnStop", v).apply()
 
     /** الحي المختار في شاشة الجولة (فارغ = كل الأحياء) */

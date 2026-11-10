@@ -217,8 +217,11 @@ class MainActivity : Activity() {
         startField = numberField(settings.startHour).also { col.addView(it) }
         col.addView(label("نهاية الدوام (ساعة 1 إلى 24)"))
         endField = numberField(settings.endHour).also { col.addView(it) }
+        col.addView(label("مجال التصوير العشوائي (اختر جاهزًا أو اكتب الحدّين أعلاه)"))
+        col.addView(presetRow(CapturePolicy.INTERVALS.map { (a, b) -> "$a–$b د" to { applyInterval(a, b) } }))
         col.addView(label("مدة الثبات التي تُعدّ توقفًا طويلًا (ثوانٍ، من 10 إلى 600؛ تسري من الجلسة التالية)"))
         stopField = numberField(settings.stopAfterSeconds).also { col.addView(it) }
+        col.addView(presetRow(CapturePolicy.STOP_SECONDS.map { s -> "$s ث" to { applyStopSeconds(s) } }))
         photoOnStopButton = button("") { togglePhotoOnStop() }
         col.addView(photoOnStopButton)
         privacyModeButton = button("") { togglePrivacyMode() }
@@ -231,7 +234,7 @@ class MainActivity : Activity() {
         col.addView(button("إيقاف الجلسة") { CaptureService.stop(this); delayedRefresh() })
         pauseButton = button("إيقاف مؤقت") { togglePause() }
         col.addView(pauseButton)
-        col.addView(button("التقاط صورة تجريبية الآن") { testCapture() })
+        col.addView(button("صورة الآن (تُحفظ مع الموقع)") { testCapture() })
 
         col.addView(label("4) الأدلة المحفوظة (بعد التشويه)", true))
         col.addView(button("التحقق من سلسلة البصمات") { verifyView.text = store.verify() })
@@ -458,9 +461,9 @@ class MainActivity : Activity() {
     private fun updatePhotoOnStopText() {
         updatePrivacyModeText()
         photoOnStopButton.text = if (settings.photoOnStop) {
-            "الصورة التلقائية عند التوقف الطويل: مفعّلة (اضغط للتعطيل)"
+            "صورة عند كل توقف (حتى بلا قاعدة بيانات): مفعّلة (اضغط للتعطيل)"
         } else {
-            "الصورة التلقائية عند التوقف الطويل: معطّلة (اضغط للتفعيل)"
+            "صورة عند كل توقف (حتى بلا قاعدة بيانات): معطّلة (اضغط للتفعيل)"
         }
     }
 
@@ -475,6 +478,36 @@ class MainActivity : Activity() {
     private fun togglePrivacyMode() {
         settings.privacyMode = if (settings.privacyMode == "FULL") "FACES" else "FULL"
         updatePrivacyModeText()
+    }
+
+    /** صف أزرار جاهزة متساوية العرض. */
+    private fun presetRow(items: List<Pair<String, () -> Unit>>): LinearLayout =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            items.forEach { (caption, action) ->
+                addView(
+                    Button(this@MainActivity).apply {
+                        this.text = caption
+                        setOnClickListener { action() }
+                    },
+                    LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                )
+            }
+        }
+
+    private fun applyInterval(minM: Int, maxM: Int) {
+        minField.setText(minM.toString())
+        maxField.setText(maxM.toString())
+        settings.minMinutes = minM
+        settings.maxMinutes = maxM
+        toast("المجال العشوائي: من $minM إلى $maxM دقيقة")
+    }
+
+    private fun applyStopSeconds(s: Int) {
+        stopField.setText(s.toString())
+        settings.stopAfterSeconds = s
+        toast("الثبات $s ثانية (تسري من الجلسة التالية)")
     }
 
     private fun togglePhotoOnStop() {

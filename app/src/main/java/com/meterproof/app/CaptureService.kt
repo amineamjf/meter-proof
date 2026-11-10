@@ -153,6 +153,9 @@ class CaptureService : LifecycleService() {
     private var lastLocation: Location? = null
     private var locationListening = false
 
+    /** وقت آخر صورة توقف (على الخيط الرئيسي فقط)، لفرض الحد الأدنى بين الصور. */
+    private var lastStopPhotoAt = 0L
+
     // ---- التتبع الذكي ومؤشرات التلاعب
     private var gpsFast = true
     private var tracking = false
@@ -200,15 +203,32 @@ class CaptureService : LifecycleService() {
                         null
                     }
                     mainHandler.post {
-                        if (arrival != null) {
-                            if (!capturing) {
-                                captureMeterId = arrival.meter.id
-                                captureLocation = lastLocation
-                                captureExtraFlags = if (arrival.ambiguous) setOf("MULTI_NEAR") else emptySet()
-                                capture("arrival")
+                        val now = System.currentTimeMillis()
+                        val action = CapturePolicy.decideStop(
+                            arrival != null, settings.photoOnStop, now, lastStopPhotoAt
+                        )
+                        when (action) {
+                            CapturePolicy.StopAction.SKIP_DISABLED -> Unit // نقطة الموقع سُجّلت أصلًا (STOP_START)
+                            CapturePolicy.StopAction.SKIP_TOO_SOON ->
+                                logFailure("stop", CapturePolicy.Reason.TOO_SOON, fix)
+                            CapturePolicy.StopAction.ARRIVAL, CapturePolicy.StopAction.STOP -> {
+                                if (capturing) {
+                                    logFailure("stop", CapturePolicy.Reason.BUSY, fix)
+                                } else {
+                                    lastStopPhotoAt = now
+                                    if (action == CapturePolicy.StopAction.ARRIVAL && arrival != null) {
+                                        captureMeterId = arrival.meter.id
+                                        captureLocation = lastLocation
+                                        captureExtraFlags =
+                                            if (arrival.ambiguous) setOf("MULTI_NEAR") else emptySet()
+                                        capture("arrival")
+                                    } else {
+                                        // موقع التوقف المختار (أفضل دقة) يُربط بالصورة حتى بلا قاعدة بيانات
+                                        captureLocation = lastLocation
+                                        capture("stop")
+                                    }
+                                }
                             }
-                        } else if (settings.photoOnStop) {
-                            capture("stop")
                         }
                     }
                 }
@@ -512,6 +532,7 @@ class CaptureService : LifecycleService() {
             != PackageManager.PERMISSION_GRANTED
         ) {
             settings.lastError = "صلاحية الكاميرا غير ممنوحة"
+            logFailure(mode, CapturePolicy.Reason.NO_CAMERA_PERMISSION)
             finishCapture(mode)
             return
         }
@@ -533,6 +554,7 @@ class CaptureService : LifecycleService() {
                 mainHandler.postDelayed({ takePicture(imageCapture, mode) }, 1200L)
             } catch (e: Exception) {
                 settings.lastError = "فشل فتح الكاميرا: ${e.javaClass.simpleName}"
+                logFailure(mode, CapturePolicy.Reason.CAMERA_OPEN_FAILED)
                 releaseCamera()
                 finishCapture(mode)
             }
@@ -581,9 +603,12 @@ class CaptureService : LifecycleService() {
                         }
                     } catch (e: Exception) {
                         settings.lastError = "فشل الحفظ: ${e.javaClass.simpleName}"
+                        logFailure(mode, CapturePolicy.Reason.SAVE_FAILED)
                     }
                 } else {
-                    logDiscard()
+                    // الحدث المفصّل للبوابة إن وُجد، وإلا حدث فشل عام: النقطة لا تضيع بصمت
+                    if (discardDetail != null) logDiscard()
+                    else if (mode != "calib") logFailure(mode, CapturePolicy.Reason.GATE_DISCARDED)
                 }
                 mainHandler.post {
                     releaseCamera()
@@ -593,6 +618,7 @@ class CaptureService : LifecycleService() {
 
             override fun onError(exception: ImageCaptureException) {
                 settings.lastError = "فشل الالتقاط (رمز ${exception.imageCaptureError})"
+                logFailure(mode, CapturePolicy.Reason.CAPTURE_ERROR)
                 mainHandler.post {
                     releaseCamera()
                     finishCapture(mode)
@@ -730,6 +756,26 @@ class CaptureService : LifecycleService() {
         }
         settings.calibResult = "$result;${System.currentTimeMillis()}"
         return null
+    }
+
+    /**
+     * فشل أو تخطٍّ لصورة: يُكتب حدث CAPTURE_FAILED بالسبب (رمز ثابت) وموقع [at] أو آخر موقع معروف،
+     * فتبقى نقطة GPS لكل توقف حتى لو لم تُلتقط الصورة.
+     */
+    private fun logFailure(mode: String, reason: String, at: MotionTracker.Fix? = null) {
+        val loc = lastLocation
+        val lat = at?.lat ?: loc?.latitude
+        val lon = at?.lon ?: loc?.longitude
+        val acc = at?.acc ?: loc?.accuracy
+        val now = System.currentTimeMillis()
+        val detail = CapturePolicy.failureDetail(mode, reason)
+        executor.execute {
+            try {
+                store.addEvent(CapturePolicy.EVENT_FAILED, now, lat, lon, acc, detail)
+            } catch (e: Exception) {
+                // تجاهل
+            }
+        }
     }
 
     /** صورة أُتلفت: يبقى سجل الحدث فقط (الرموز والزمن، بلا أي بيانات عن المشهد). */

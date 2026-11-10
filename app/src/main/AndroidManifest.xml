@@ -57,6 +57,11 @@
             android:label="معرض الصور" />
 
         <activity
+            android:name=".TrainingActivity"
+            android:exported="false"
+            android:label="التدريب من الصور" />
+
+        <activity
             android:name=".MapActivity"
             android:exported="false"
             android:label="الخارطة" />

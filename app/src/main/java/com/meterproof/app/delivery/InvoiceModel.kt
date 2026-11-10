@@ -183,6 +183,49 @@ object InvoiceTrainer {
         return Result.Ready(model)
     }
 
+    /**
+     * درجة كل عينة بالتحقق المتقاطع (خارج العينة)، بنفس توحيد السمات وتوزيع الطيّات في [train]،
+     * بترتيب القائمة الممرَّرة نفسه. تُستعمل لعرض ما يكتشفه النموذج على كل صورة دون أن تُقاس الصورة
+     * بنموذج رآها أثناء تدريبه (فلا تبدو النتيجة أفضل من حقيقتها).
+     * null إن لم تتوفر عينات كافية من كل فئة (أقل من عينتين).
+     */
+    fun outOfFoldScores(samples: List<Sample>, cfg: Config = Config()): DoubleArray? {
+        val posIdx = samples.indices.filter { samples[it].positive }.sortedBy { samples[it].t }
+        val negIdx = samples.indices.filter { !samples[it].positive }.sortedBy { samples[it].t }
+        if (posIdx.size < 2 || negIdx.size < 2) return null
+
+        val order = posIdx + negIdx          // نفس ترتيب train: الإيجابيات ثم السلبيات، كلٌّ بالزمن
+        val n = order.size
+        val d = InvoiceFeatures.SIZE
+        val raw = Array(n) { i -> DoubleArray(d) { k -> samples[order[i]].features.toList()[k].toDouble() } }
+        val y = DoubleArray(n) { if (it < posIdx.size) 1.0 else 0.0 }
+
+        val mean = DoubleArray(d)
+        val std = DoubleArray(d)
+        for (k in 0 until d) {
+            var s = 0.0
+            for (i in 0 until n) s += raw[i][k]
+            mean[k] = s / n
+            var v = 0.0
+            for (i in 0 until n) v += (raw[i][k] - mean[k]) * (raw[i][k] - mean[k])
+            std[k] = max(sqrt(v / n), 1e-3)
+        }
+        val z = Array(n) { i -> DoubleArray(d) { k -> (raw[i][k] - mean[k]) / std[k] } }
+
+        val folds = min(cfg.folds, min(posIdx.size, negIdx.size)).coerceAtLeast(2)
+        val fold = IntArray(n) { if (it < posIdx.size) it % folds else (it - posIdx.size) % folds }
+        val oof = DoubleArray(n)
+        for (f in 0 until folds) {
+            val train = (0 until n).filter { fold[it] != f }
+            val (w, b) = fit(z, y, train, cfg)
+            for (i in 0 until n) if (fold[i] == f) oof[i] = sigmoid(dot(w, z[i]) + b)
+        }
+
+        val out = DoubleArray(samples.size)
+        for (i in 0 until n) out[order[i]] = oof[i]
+        return out
+    }
+
     private fun dot(w: DoubleArray, x: DoubleArray): Double {
         var s = 0.0
         for (k in w.indices) s += w[k] * x[k]

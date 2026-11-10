@@ -103,6 +103,15 @@ class PhotoGalleryActivity : Activity() {
         labelRow.addView(smallButton("مسح") { labelSelected(null) }, weight())
         root.addView(labelRow)
 
+        root.addView(smallButton("تدرّب على الصور المصنَّفة وأرني النتيجة") {
+            val c = PhotoLabels.counts(labels)
+            if (c.invoice + c.none < 4) {
+                toast("صنّف بعض الصور أولًا (فاتورة / بلا فاتورة)")
+            } else {
+                startActivity(android.content.Intent(this, TrainingActivity::class.java))
+            }
+        })
+
         val cellSize = resources.displayMetrics.widthPixels / 3 - dp(8)
         grid = GridView(this).apply {
             numColumns = 3

@@ -272,4 +272,29 @@ class RoundDb(context: Context) :
         cv.put("learned", 1)
         writableDatabase.update("meters", cv, "id = ? AND lat IS NULL", arrayOf(id.toString()))
     }
+
+    /** بحث عن عدادات برقم العداد أو العقد أو العنوان (والاسم إن كان إظهار بيانات الزبون مفعّلًا). */
+    @Synchronized
+    fun search(q: String, limit: Int): List<MeterItem> {
+        val clean = q.trim().replace("%", "").replace("_", "")
+        if (clean.isEmpty()) return emptyList()
+        val like = "%$clean%"
+        val cond = StringBuilder("meter_no LIKE ? OR contract LIKE ? OR address LIKE ?")
+        val args = ArrayList<String>()
+        args.add(like); args.add(like); args.add(like)
+        if (CustomerInfo.SHOW) {
+            cond.append(" OR customer_name LIKE ?")
+            args.add(like)
+        }
+        args.add(clean)
+        val out = ArrayList<MeterItem>()
+        readableDatabase.rawQuery(
+            "SELECT $columns FROM meters WHERE ($cond) " +
+                "ORDER BY (meter_no = ?) DESC, (lat IS NULL) ASC, meter_no LIMIT $limit",
+            args.toTypedArray()
+        ).use { c ->
+            while (c.moveToNext()) out.add(item(c))
+        }
+        return out
+    }
 }

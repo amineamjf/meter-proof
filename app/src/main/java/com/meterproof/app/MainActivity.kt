@@ -279,6 +279,18 @@ class MainActivity : Activity() {
             setPadding(0, dp(8), 0, dp(4))
         }
         col.addView(mapPackView)
+        col.addView(button("تحميل خارطة الأزقة حول عدادات الجولة") {
+            startActivity(Intent(this, MapActivity::class.java).putExtra(MapActivity.EXTRA_DOWNLOAD, true))
+        })
+        col.addView(button("مفتاح MapTiler (قمر صناعي وتضاريس)") { MapKeyDialog.show(this) { } })
+        col.addView(button("حذف خارطة الأزقة المحمّلة") {
+            android.app.AlertDialog.Builder(this)
+                .setTitle("حذف خارطة الأزقة؟")
+                .setMessage("تُحذف البيانات المحمّلة من الهاتف ويمكن تحميلها من جديد.")
+                .setPositiveButton("احذف") { _, _ -> AreaStore(this).clear(); mapView.reloadTiles() }
+                .setNegativeButton("إلغاء", null)
+                .show()
+        })
         col.addView(button("استيراد ملف خارطة محلية (MBTiles)") { pickMapFile() })
         col.addView(button("حذف الخارطة المحلية") { confirmDeleteMap() })
         col.addView(button("فتح خارطة الإنترنت في المتصفح (احتياطي)") { openMapInBrowser() })
@@ -377,7 +389,7 @@ class MainActivity : Activity() {
         statusView.text = sb.toString()
 
         pauseButton.text = if (settings.paused) "استئناف التصوير" else "إيقاف مؤقت"
-        mapPackView.text = importNote ?: MapPack.describe(this)
+        mapPackView.text = importNote ?: (AreaStore(this).describe() + "\n" + MapPack.describe(this))
 
         val count = store.count()
         if (count != shownCount) {

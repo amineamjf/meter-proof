@@ -107,3 +107,8 @@
 ## الخصوصية والقانون
 
 لا بيانات تُرسل خارج الجهاز في هذه النسخة. وبيانات الزبون المخزَّنة على الهاتف تستلزم الإشارة إليها في تصريح CNDP (قانون 09-08) وموافقة العمال قبل أي تشغيل فعلي.
+
+## الخارطة: تحميل الأزقة والطبقات والذهاب إلى
+- ملفات: AreaPlan, AreaStore, AreaDownloader, OverpassClient, OsmData, RoadGraph, AreaRouter, AreaLayer, TileSource، وشاشة MapActivity.
+- لم يُجرَّب البناء محليًا؛ المرجع نتيجة GitHub Actions.
+- قرارات مفتوحة: تحميل MapTiler الجماعي غير مبني لسبب الشروط؛ applicationId ما زال .v2.

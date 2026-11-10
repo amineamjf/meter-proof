@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.RectF
 import android.util.LruCache
 import android.view.GestureDetector
@@ -58,7 +59,31 @@ class TrackMapView(context: Context, private val interactive: Boolean = false) :
     private var cyPx = 0.0
 
     // ---- البلاطات
-    @Volatile private var tiles: MbTiles? = null
+    @Volatile private var source: TileSource? = null
+    private var layer: MapLayer = MapLayer.STREETS
+    private var area: AreaLayer? = null
+    private var onlinePool: ExecutorService? = null
+    private var keyMissing = false
+
+    // ---- موقعي والمسار والهدف (فوق الخارطة)
+    private var myLat = Double.NaN
+    private var myLon = Double.NaN
+    private var myAcc = 0f
+    private var routePts: List<GeoPoint>? = null
+    private var targetPt: GeoPoint? = null
+    private val myPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val routeCasing = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE; style = Paint.Style.STROKE; strokeWidth = 8f * density
+        strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
+    }
+    private val routeLine = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#1257D6"); style = Paint.Style.STROKE; strokeWidth = 4.5f * density
+        strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
+    }
+    private val routePath = Path()
+    private val msgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#B91C1C"); textSize = 13f * density; textAlign = Paint.Align.CENTER
+    }
     private var io: ExecutorService? = null
     private val cache = object : LruCache<Long, Bitmap>(
         (Runtime.getRuntime().maxMemory() / 8 / 1024).toInt().coerceIn(4 * 1024, 48 * 1024)
@@ -154,26 +179,97 @@ class TrackMapView(context: Context, private val interactive: Boolean = false) :
         invalidate()
     }
 
-    /** يعيد تحميل ملف الخارطة المحلية (بعد استيراده أو حذفه). */
+    private fun areaLayer(): AreaLayer {
+        var a = area
+        if (a == null) {
+            a = AreaLayer(AreaStore(context), density)
+            area = a
+        }
+        return a
+    }
+
+    /** يعيد تحميل مصدر الخلفية بحسب الطبقة (بعد استيراد ملف أو حذفه أو تغيير الطبقة أو المفتاح). */
     fun reloadTiles() {
-        val old = tiles
-        tiles = null
+        val old = source
+        source = null
         cache.evictAll()
         pending.clear()
         missing.clear()
+        keyMissing = false
         if (old != null) executor()?.execute { old.close() }
+        area?.refresh()
         invalidate()
-        if (!MapPack.exists(context)) return
-        executor()?.execute {
-            val r = MbTiles.open(MapPack.file(context))
-            post {
-                if (r is MbTiles.OpenResult.Ok) {
-                    tiles = r.tiles
-                    if (autoFit) needFit = true
-                    invalidate()
+        when (layer) {
+            MapLayer.STREETS -> {
+                if (!MapPack.exists(context)) return
+                executor()?.execute {
+                    val r = MbTiles.open(MapPack.file(context))
+                    post {
+                        if (r is MbTiles.OpenResult.Ok && layer == MapLayer.STREETS) {
+                            source = MbTilesSource(r.tiles)
+                            if (autoFit) needFit = true
+                            invalidate()
+                        } else if (r is MbTiles.OpenResult.Ok) {
+                            r.tiles.close()
+                        }
+                    }
                 }
             }
+            else -> {
+                val key = Settings(context).maptilerKey
+                if (key.isEmpty()) {
+                    keyMissing = true
+                } else {
+                    source = OnlineTileSource(context, layer, key)
+                }
+                invalidate()
+            }
         }
+    }
+
+    fun getLayer(): MapLayer = layer
+
+    /** يحدد الطبقة قبل إرفاق الواجهة (بلا إعادة تحميل؛ سيجري عند الإرفاق). */
+    fun initLayer(l: MapLayer) {
+        layer = l
+    }
+
+    fun setLayer(l: MapLayer) {
+        layer = l
+        reloadTiles()
+    }
+
+    /** هل توجد خارطة أزقة محمّلة (متجهة) تُرسم في طبقة الشوارع. */
+    fun hasAreaData(): Boolean = areaLayer().hasData
+
+    fun setMyLocation(lat: Double, lon: Double, acc: Float) {
+        myLat = lat
+        myLon = lon
+        myAcc = acc
+        invalidate()
+    }
+
+    fun hasMyLocation(): Boolean = !myLat.isNaN()
+
+    fun setRoute(points: List<GeoPoint>?) {
+        routePts = points
+        invalidate()
+    }
+
+    fun setTarget(p: GeoPoint?) {
+        targetPt = p
+        invalidate()
+    }
+
+    /** يوسّط الخارطة على نقطة بتكبير معيّن (للبحث و«موقعي»). */
+    fun focusOn(lat: Double, lon: Double, z: Double) {
+        autoFit = false
+        needFit = false
+        hasData = true
+        centerLat = lat.coerceIn(-TileMath.MAX_LAT, TileMath.MAX_LAT)
+        centerLon = lon.coerceIn(-180.0, 180.0)
+        zoom = z.coerceIn(minZoomAllowed(), maxZoomAllowed())
+        invalidate()
     }
 
     /** يعيد الكاميرا لتلائم كل النقاط. */
@@ -196,8 +292,12 @@ class TrackMapView(context: Context, private val interactive: Boolean = false) :
     }
 
     override fun onDetachedFromWindow() {
-        val t = tiles
-        tiles = null
+        val t = source
+        source = null
+        area?.close()
+        area = null
+        onlinePool?.shutdownNow()
+        onlinePool = null
         cache.evictAll()
         pending.clear()
         missing.clear()
@@ -225,11 +325,13 @@ class TrackMapView(context: Context, private val interactive: Boolean = false) :
 
     // ---------------------------------------------------------------- الكاميرا
 
+    private fun vectorMode(): Boolean = layer == MapLayer.STREETS && areaLayer().hasData
+
     private fun minZoomAllowed(): Double =
-        (tiles?.let { it.minZoom - 1.0 } ?: 2.0).coerceAtLeast(2.0)
+        (source?.let { it.minZoom - 1.0 } ?: 2.0).coerceAtLeast(2.0)
 
     private fun maxZoomAllowed(): Double =
-        (tiles?.let { it.maxZoom + 2.0 } ?: 19.0).coerceAtMost(21.0)
+        if (vectorMode()) 20.0 else (source?.let { it.maxZoom + 2.0 } ?: 19.0).coerceAtMost(21.0)
 
     private fun fitToData() {
         val pts = ArrayList<GeoPoint>(track.size + photos.size + stops.size)
@@ -294,10 +396,20 @@ class TrackMapView(context: Context, private val interactive: Boolean = false) :
     private fun key(z: Int, x: Int, y: Int): Long =
         (z.toLong() shl 50) or (x.toLong() shl 25) or y.toLong()
 
-    private fun request(mb: MbTiles, z: Int, x: Int, y: Int, key: Long) {
+    private fun onlineExecutor(): ExecutorService {
+        var ex = onlinePool
+        if (ex == null) {
+            ex = Executors.newFixedThreadPool(4)
+            onlinePool = ex
+        }
+        return ex!!
+    }
+
+    private fun request(mb: TileSource, z: Int, x: Int, y: Int, key: Long) {
         if (key in missing || !pending.add(key)) return
         try {
-            executor()?.execute {
+            val pool = if (mb is OnlineTileSource) onlineExecutor() else executor()
+            pool?.execute {
                 val bytes = mb.tile(z, x, y)
                 val bmp = if (bytes != null) {
                     try {
@@ -310,7 +422,7 @@ class TrackMapView(context: Context, private val interactive: Boolean = false) :
                 }
                 post {
                     pending.remove(key)
-                    if (tiles === mb) {
+                    if (source === mb) {
                         if (bmp != null) {
                             cache.put(key, bmp)
                             invalidate()
@@ -326,7 +438,7 @@ class TrackMapView(context: Context, private val interactive: Boolean = false) :
     }
 
     private fun drawTiles(canvas: Canvas, w: Float, h: Float) {
-        val mb = tiles ?: return
+        val mb = source ?: return
         val z = floor(zoom + 0.5).toInt().coerceIn(mb.minZoom, mb.maxZoom)
         val dst = tilePx * 2.0.pow(zoom - z)
         val xr = TileMath.tileRange(cxPx, w.toDouble(), dst, z)
@@ -348,8 +460,58 @@ class TrackMapView(context: Context, private val interactive: Boolean = false) :
         }
     }
 
+    /** رسالة فوق الخارطة حين تنقص طبقة القمر الصناعي أو التضاريس شيئًا (مفتاح أو خطأ). */
+    private fun drawLayerMessage(canvas: Canvas, w: Float) {
+        val msg = when {
+            keyMissing -> "أدخل مفتاح MapTiler من إعدادات التطبيق لعرض ${layer.label}"
+            (source as? OnlineTileSource)?.lastError != null -> (source as OnlineTileSource).lastError
+            else -> null
+        } ?: return
+        canvas.drawText(msg, w / 2, 96f * density, msgPaint)
+    }
+
+    private fun drawRouteAndMe(canvas: Canvas, w: Float, h: Float) {
+        val rp = routePts
+        if (rp != null && rp.size >= 2) {
+            routePath.reset()
+            for (i in rp.indices) {
+                val px = projector.x(rp[i].lon)
+                val py = projector.y(rp[i].lat)
+                if (i == 0) routePath.moveTo(px, py) else routePath.lineTo(px, py)
+            }
+            canvas.drawPath(routePath, routeCasing)
+            canvas.drawPath(routePath, routeLine)
+        }
+        val t = targetPt
+        if (t != null) {
+            val tx = projector.x(t.lon)
+            val ty = projector.y(t.lat)
+            myPaint.style = Paint.Style.STROKE
+            myPaint.strokeWidth = 3f * density
+            myPaint.color = Color.parseColor("#E11D48")
+            canvas.drawCircle(tx, ty, 16f * density, myPaint)
+            myPaint.style = Paint.Style.FILL
+        }
+        if (!myLat.isNaN()) {
+            val mx = projector.x(myLon)
+            val my = projector.y(myLat)
+            val mpp = projector.metersPerPixel()
+            val r = if (mpp > 0) (myAcc / mpp).toFloat() else 0f
+            myPaint.style = Paint.Style.FILL
+            myPaint.color = Color.parseColor("#2E2B7DE9")
+            canvas.drawCircle(mx, my, maxOf(r, 12f * density), myPaint)
+            myPaint.color = Color.WHITE
+            canvas.drawCircle(mx, my, 9f * density, myPaint)
+            myPaint.color = Color.parseColor("#2B7DE9")
+            canvas.drawCircle(mx, my, 6.5f * density, myPaint)
+        }
+    }
+
     private fun drawAttribution(canvas: Canvas, w: Float, h: Float) {
-        val text = tiles?.attribution ?: return
+        val text = when {
+            vectorMode() -> AreaLayer.ATTRIBUTION
+            else -> source?.attribution ?: return
+        }
         if (text.isEmpty()) return
         val tw = attrPaint.measureText(text)
         val right = w - 6f * density
@@ -377,8 +539,17 @@ class TrackMapView(context: Context, private val interactive: Boolean = false) :
         cxPx = TileMath.lonToX(centerLon, zoom, tilePx)
         cyPx = TileMath.latToY(centerLat, zoom, tilePx)
         canvas.drawColor(Color.parseColor("#F3F5F7"))
-        drawTiles(canvas, w, h)
+        if (vectorMode()) {
+            areaLayer().draw(
+                canvas, w, h, cxPx, cyPx, zoom, tilePx,
+                { r -> post(r) }, { invalidate() }
+            )
+        } else {
+            drawTiles(canvas, w, h)
+            drawLayerMessage(canvas, w)
+        }
         renderer.draw(canvas, w, h, track, photos, stops, selected, projector, meters)
+        drawRouteAndMe(canvas, w, h)
         drawAttribution(canvas, w, h)
     }
 

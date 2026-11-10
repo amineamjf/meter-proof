@@ -65,4 +65,6 @@ dependencies {
 
     // اختبارات الوحدة للمنطق النقي (التوقف والحركة وملخص اليوم)
     testImplementation("junit:junit:4.13.2")
+    // org.json الحقيقي لاختبار تحليل ردّ Overpass على JVM (نسخة أندرويد داخل android.jar مجرّد هيكل)
+    testImplementation("org.json:json:20240303")
 }

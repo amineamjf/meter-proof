@@ -516,9 +516,44 @@ class MainActivity : Activity() {
             return
         }
         val (start, end) = Days.range(dayOffset)
-        toast("جارٍ إنشاء ملف PDF")
+        toast("جارٍ تجهيز ملف PDF")
         Thread {
-            val result = Exporter.exportSummaryPdf(applicationContext, store, start, end)
+            // بلاطات الخارطة الناقصة لهذا اليوم (قراءة محلية فقط، لا شبكة هنا)
+            val prep = Exporter.prepareSummaryMap(applicationContext, store, start, end)
+            runOnUiThread {
+                if (prep != null && prep.missing.isNotEmpty() && Net.online(this)) {
+                    confirmReportTiles(prep, start, end)
+                } else {
+                    runSummaryExport(start, end, false)
+                }
+            }
+        }.start()
+    }
+
+    /** الجلب يكشف للمزوّد منطقة عملك، فلا يجري إلا بموافقة صريحة، ويظهر اسم المزوّد وعدد الصور. */
+    private fun confirmReportTiles(prep: ReportTiles.Prep, start: Long, end: Long) {
+        val provider = when {
+            TileLayers.isSatellite(prep.template) -> "Esri (قمر صناعي)"
+            prep.template.trim() == TileLayers.PLAN -> "CARTO (مخطط)"
+            else -> "مزوّد الرابط المخصص"
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("خارطة التقرير")
+            .setMessage(
+                "تحتاج خارطة هذا التقرير ${prep.missing.size} صورة غير مخزّنة (≈ ${prep.estimateMb()} ميغابايت). " +
+                    "تُجلب من $provider عبر الإنترنت، ويُرسل إليه موقع منطقة عملك.\n" +
+                    "بدون جلبها تكون خلفية الخارطة ناقصة أو غائبة."
+            )
+            .setPositiveButton("جلبها وتصدير") { _, _ -> runSummaryExport(start, end, true) }
+            .setNeutralButton("تصدير دون جلب") { _, _ -> runSummaryExport(start, end, false) }
+            .setNegativeButton("إلغاء", null)
+            .show()
+    }
+
+    private fun runSummaryExport(start: Long, end: Long, fetch: Boolean) {
+        toast(if (fetch) "جارٍ جلب الخارطة وإنشاء PDF" else "جارٍ إنشاء ملف PDF")
+        Thread {
+            val result = Exporter.exportSummaryPdf(applicationContext, store, start, end, fetch)
             runOnUiThread { toast(result.message) }
         }.start()
     }

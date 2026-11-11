@@ -67,8 +67,11 @@ object Exporter {
             // ملخص اليوم الحالي بصيغة PDF (فشله لا يُسقط بقية التصدير)
             try {
                 val (s, e) = Days.range(0)
-                val pdf = summaryPdfBytes(store, s, e, verification, visitedMeters(context, s, e))
-                write(context, dir, "summary_today.pdf", "application/pdf") { out -> out.write(pdf) }
+                // من مخزن الجهاز فقط (لا شبكة في «تصدير الكل»)
+                val pdf = summaryPdfBytes(
+                    store, s, e, verification, visitedMeters(context, s, e), ReportTiles.source(context)
+                )
+                write(context, dir, "summary_today.pdf", "application/pdf") { out -> out.write(pdf.bytes) }
             } catch (ex: Exception) {
                 // نتابع بدون الملخص
             }
@@ -79,20 +82,64 @@ object Exporter {
         }
     }
 
-    /** يصدّر ملخص يوم واحد (PDF) إلى Download/MeterProof/. */
-    fun exportSummaryPdf(
+    /**
+     * بلاطات خرائط تقرير هذا اليوم: ما يلزم وما هو ناقص من مخزن الجهاز، لعرضه على المستخدم قبل أي جلب.
+     * null إن لم تكن للتقرير نقاط موقع. يُستدعى من خيط خلفي (يقرأ قاعدة البيانات).
+     */
+    fun prepareSummaryMap(
         context: Context, store: EvidenceStore, dayStartMs: Long, dayEndMs: Long
+    ): ReportTiles.Prep? = try {
+        val d = dayData(store, dayStartMs, dayEndMs)
+        val plan = PdfReport.mapPlan(
+            d.track, d.photos, d.summary.stops, visitedMeters(context, dayStartMs, dayEndMs)
+        )
+        if (plan.overview == null) null else ReportTiles.prepare(context, plan)
+    } catch (e: Exception) {
+        null
+    }
+
+    /**
+     * يصدّر ملخص يوم واحد (PDF) إلى Download/MeterProof/.
+     * [fetchMissing]: يجلب بلاطات الخارطة الناقصة قبل الرسم (بموافقة المستخدم فقط، ومع اتصال).
+     */
+    fun exportSummaryPdf(
+        context: Context, store: EvidenceStore, dayStartMs: Long, dayEndMs: Long,
+        fetchMissing: Boolean = false
     ): Result {
         return try {
-            val pdf = summaryPdfBytes(
-                store, dayStartMs, dayEndMs, store.verify(), visitedMeters(context, dayStartMs, dayEndMs)
+            val meters = visitedMeters(context, dayStartMs, dayEndMs)
+            var fetchNote = ""
+            if (fetchMissing && Net.online(context)) {
+                val prep = prepareSummaryMap(context, store, dayStartMs, dayEndMs)
+                if (prep != null && prep.missing.isNotEmpty()) {
+                    val r = ReportTiles.fetch(context, prep)
+                    fetchNote = when {
+                        r.aborted != null -> "\nتوقف جلب الخارطة: ${r.aborted}"
+                        r.failed > 0 -> "\nجُلبت ${r.ok} صورة للخارطة وتعذّر ${r.failed} (${r.firstError})"
+                        else -> "\nجُلبت ${r.ok} صورة للخارطة"
+                    }
+                }
+            }
+            val built = summaryPdfBytes(
+                store, dayStartMs, dayEndMs, store.verify(), meters, ReportTiles.source(context)
             )
             val name = "summary_" + SimpleDateFormat("yyyyMMdd", Locale.US).format(Date(dayStartMs)) + ".pdf"
-            write(context, "MeterProof", name, "application/pdf") { out -> out.write(pdf) }
-            Result(true, "تم حفظ الملخص: التنزيلات/MeterProof/$name")
+            write(context, "MeterProof", name, "application/pdf") { out -> out.write(built.bytes) }
+            Result(true, "تم حفظ الملخص: التنزيلات/MeterProof/$name" + mapNote(built.map) + fetchNote)
         } catch (e: Exception) {
             Result(false, "فشل تصدير الملخص: ${e.message ?: e.javaClass.simpleName}")
         }
+    }
+
+    /** وصف صادق لخلفية الخارطة في الملف الناتج. */
+    private fun mapNote(o: ReportMapOutcome?): String = when {
+        o == null -> ""
+        o.usedTiles && o.complete ->
+            "\nالخارطة بخلفية القمر الصناعي" + (if (o.details > 0) " و${o.details} خرائط تفصيلية" else "")
+        o.usedTiles ->
+            "\nخلفية الخارطة ناقصة في بعض المواضع (بلاطات غير مخزنة)" +
+                (if (o.details > 0) "، و${o.details} خرائط تفصيلية" else "")
+        else -> "\nبلا خلفية خارطة: لا بلاطات مخزنة للمنطقة. حمّل الخارطة أو صدّر مع اتصال"
     }
 
     /** عدادات الجولة التي زيرت في هذا اليوم فقط (وصول أو تصوير)، كي لا تتضخم خارطة التقرير. */
@@ -102,10 +149,9 @@ object Exporter {
         emptyList()
     }
 
-    private fun summaryPdfBytes(
-        store: EvidenceStore, dayStartMs: Long, dayEndMs: Long, verification: String,
-        meters: List<MeterPoint> = emptyList()
-    ): ByteArray {
+    private class DayData(val now: Long, val summary: DaySummary, val track: List<GeoPoint>, val photos: List<PhotoPoint>)
+
+    private fun dayData(store: EvidenceStore, dayStartMs: Long, dayEndMs: Long): DayData {
         val now = System.currentTimeMillis()
         val summary = DaySummaryBuilder.build(
             dayStartMs, dayEndMs, now, store.timedTrack(), store.events(), store.photoTimes()
@@ -114,9 +160,31 @@ object Exporter {
             .filter { it.t in dayStartMs until dayEndMs }
             .map { GeoPoint(it.lat, it.lon) }
         val dayPhotos = store.photoPoints().filter { it.timeMillis in dayStartMs until dayEndMs }
-        val bos = ByteArrayOutputStream()
-        PdfReport.write(summary, now, dayTrack, dayPhotos, verification, bos, meters)
-        return bos.toByteArray()
+        return DayData(now, summary, dayTrack, dayPhotos)
+    }
+
+    private class PdfBuild(val bytes: ByteArray, val map: ReportMapOutcome?)
+
+    /**
+     * يبني ملف الملخص. إن فشل رسم خلفية الخارطة لأي سبب يُعاد البناء بلا خلفية (السلوك القديم)،
+     * فلا يضيع التقرير بسبب الخارطة.
+     */
+    private fun summaryPdfBytes(
+        store: EvidenceStore, dayStartMs: Long, dayEndMs: Long, verification: String,
+        meters: List<MeterPoint> = emptyList(), map: ReportMapSource? = null
+    ): PdfBuild {
+        val d = dayData(store, dayStartMs, dayEndMs)
+        fun build(m: ReportMapSource?): PdfBuild {
+            val bos = ByteArrayOutputStream()
+            val outcome = PdfReport.write(d.summary, d.now, d.track, d.photos, verification, bos, meters, m)
+            return PdfBuild(bos.toByteArray(), if (m != null) outcome else null)
+        }
+        return try {
+            build(map)
+        } catch (e: Throwable) {
+            if (map == null) throw e
+            build(null)
+        }
     }
 
     private fun copyIfExists(context: Context, dir: String, src: File, name: String) {

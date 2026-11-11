@@ -21,6 +21,18 @@ object TileLayers {
     fun attribution(template: String): String =
         if (isSatellite(template)) "© Esri" else "© OpenStreetMap © CARTO"
 
+    /**
+     * نص النسب المطبوع على خرائط تقرير PDF. للقمر الصناعي هو سطر الإسناد المنشور في صفحة World Imagery
+     * الرسمية لدى Esri («Sources: Esri, Maxar, Earthstar Geographics, and the GIS User Community»).
+     * لا نسب ديناميكية بحسب الموقع (مزوّدو الصور يختلفون بين المناطق)، ولم تُراجَع شروط الاستخدام
+     * نفسها: انظر docs/MAP_TILES.md. للرابط المخصص لا نعرف المزوّد، فيُذكر ذلك صراحة.
+     */
+    fun reportAttribution(template: String): String = when {
+        isSatellite(template) -> "Sources: Esri, Maxar, Earthstar Geographics, and the GIS User Community"
+        template.trim() == PLAN -> "© OpenStreetMap contributors © CARTO"
+        else -> "خلفية الخارطة: مزوّد مخصص"
+    }
+
     fun build(template: String, z: Int, x: Int, y: Int): String =
         template.trim().replace("{z}", z.toString()).replace("{x}", x.toString()).replace("{y}", y.toString())
 

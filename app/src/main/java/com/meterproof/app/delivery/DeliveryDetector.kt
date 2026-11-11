@@ -13,7 +13,9 @@ data class DeliveryResult(
     val state: DeliveryState,
     val score: Float,
     val region: Region?,
-    val modelId: String
+    val modelId: String,
+    /** الموضع المتعلَّم الذي وقعت فيه الفاتورة (فوق/تحت/بجانب الباب)، أو null إن لم يُعرف. */
+    val placement: Placement? = null
 )
 
 /**
@@ -22,28 +24,43 @@ data class DeliveryResult(
  */
 class DeliveryDetector(
     private val model: InvoiceModel,
-    private val cfg: InvoiceAnalyzer.Config = InvoiceAnalyzer.Config()
+    private val cfg: InvoiceAnalyzer.Config = InvoiceAnalyzer.Config(),
+    private val prior: PlacementPrior = PlacementPrior.NONE
 ) {
+    /**
+     * يقيّم كل مرشحي الورق (لا الأكبر فقط) ويعيد الأعلى درجة. الفاتورة الصغيرة بجانب جدار فاتح كبير
+     * كانت تضيع لأن الجدار هو «الأكبر».
+     */
     fun detect(frame: Frame): DeliveryResult {
         val px = frame.argb()
         try {
-            val c = InvoiceAnalyzer.analyze(px, frame.width, frame.height, cfg)
-                ?: return DeliveryResult(DeliveryState.NONE, 0f, null, model.id)
-            return classify(c, model)
+            val all = InvoiceAnalyzer.analyzeAll(px, frame.width, frame.height, cfg)
+            if (all.isEmpty()) return DeliveryResult(DeliveryState.NONE, 0f, null, model.id)
+            return all.map { classify(it, model, prior) }.maxByOrNull { it.score }!!
         } finally {
             px.fill(0)
         }
     }
 
     companion object {
-        fun classify(c: InvoiceCandidate, model: InvoiceModel): DeliveryResult {
+        fun classify(c: InvoiceCandidate, model: InvoiceModel): DeliveryResult =
+            classify(c, model, PlacementPrior.NONE)
+
+        /**
+         * مع [prior] فعّال: مرشح «مؤكد» وقع مركزه خارج كل المواضع المتعلَّمة يُخفَّض إلى «غير مؤكد».
+         * التخفيض فقط، فلا يزيد أبدًا من القبول الخاطئ.
+         */
+        fun classify(c: InvoiceCandidate, model: InvoiceModel, prior: PlacementPrior): DeliveryResult {
             val s = model.score(c.features)
-            val state = when {
+            var state = when {
                 s >= model.acceptThreshold -> DeliveryState.DETECTED
                 s >= model.uncertainThreshold -> DeliveryState.UNCERTAIN
                 else -> DeliveryState.NONE
             }
-            return DeliveryResult(state, s, c.region, model.id)
+            if (state == DeliveryState.DETECTED && !prior.allowsDetected(c.region)) {
+                state = DeliveryState.UNCERTAIN
+            }
+            return DeliveryResult(state, s, c.region, model.id, prior.placementOf(c.region))
         }
     }
 }

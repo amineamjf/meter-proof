@@ -63,7 +63,25 @@ object InvoiceAnalyzer {
         val regionMargin: Float = 0.02f
     )
 
-    fun analyze(argb: IntArray, w: Int, h: Int, cfg: Config = Config()): InvoiceCandidate? {
+    /** مكوّن متصل واحد من قناع الورق (إحداثيات خلايا الشبكة). */
+    private class Seg(
+        val id: Int, val area: Int, val minX: Int, val maxX: Int, val minY: Int, val maxY: Int
+    )
+
+    /** تقسيم الإطار: شبكة السطوع والتشبع وتسمية المكوّنات. [segs] بترتيب الاكتشاف (رقم المكوّن). */
+    private class Scene(
+        val gw: Int, val gh: Int, val luma: IntArray, val sat: FloatArray,
+        val comp: IntArray, val segs: List<Seg>
+    )
+
+    /**
+     * يقسّم الإطار إلى مكوّنات «فاتحة قليلة التشبع». إن مُرِّرت [within] لا تُحسب إلا الخلايا التي يقع
+     * مركزها داخل المنطقة (للتعليم اليدوي: «الفاتورة هنا»)، أما عتبة أوتسو فتبقى على الإطار كله
+     * ليتطابق التعليم مع الكشف الحي.
+     */
+    private fun segment(
+        argb: IntArray, w: Int, h: Int, cfg: Config, within: Region?
+    ): Scene? {
         if (w < 8 || h < 8 || argb.size < w.toLong() * h) return null
 
         val gw = min(cfg.gridCols, w).coerceAtLeast(4)
@@ -86,16 +104,20 @@ object InvoiceAnalyzer {
 
         val thr = max(otsu(luma), cfg.minLuma)
         val mask = BooleanArray(cells) { luma[it] > thr && sat[it] <= cfg.maxSaturation }
+        if (within != null) {
+            val r = within.clamped()
+            for (i in 0 until cells) {
+                if (!mask[i]) continue
+                val cx = ((i % gw) + 0.5f) / gw
+                val cy = ((i / gw) + 0.5f) / gh
+                if (cx < r.left || cx > r.right || cy < r.top || cy > r.bottom) mask[i] = false
+            }
+        }
 
-        // أكبر مكوّن متصل (4 جيران) بطابور صريح، دون تكرار ذاتي
+        // المكوّنات المتصلة (4 جيران) بطابور صريح، دون تكرار ذاتي
         val comp = IntArray(cells) { -1 }
         val queue = IntArray(cells)
-        var bestId = -1
-        var bestArea = 0
-        var bMinX = 0
-        var bMaxX = 0
-        var bMinY = 0
-        var bMaxY = 0
+        val segs = ArrayList<Seg>()
         var nextId = 0
         for (start in 0 until cells) {
             if (!mask[start] || comp[start] != -1) continue
@@ -123,23 +145,22 @@ object InvoiceAnalyzer {
                 if (cy > 0) tail = push(c - gw, mask, comp, id, queue, tail)
                 if (cy < gh - 1) tail = push(c + gw, mask, comp, id, queue, tail)
             }
-            if (area > bestArea) {
-                bestArea = area
-                bestId = id
-                bMinX = minX
-                bMaxX = maxX
-                bMinY = minY
-                bMaxY = maxY
-            }
+            segs.add(Seg(id, area, minX, maxX, minY, maxY))
         }
-        if (bestId < 0) return null
+        return Scene(gw, gh, luma, sat, comp, segs)
+    }
 
-        val areaFrac = bestArea / cells.toFloat()
-        if (areaFrac < cfg.minAreaFrac || areaFrac > cfg.maxAreaFrac) return null
-
-        val bw = bMaxX - bMinX + 1
-        val bh = bMaxY - bMinY + 1
-        val fill = bestArea / (bw.toFloat() * bh)
+    /** سمات وإطار مكوّن واحد (نفس الحساب الأصلي حرفيًا). */
+    private fun candidateOf(
+        argb: IntArray, w: Int, h: Int, cfg: Config, sc: Scene, seg: Seg
+    ): InvoiceCandidate {
+        val gw = sc.gw
+        val gh = sc.gh
+        val cells = gw * gh
+        val bw = seg.maxX - seg.minX + 1
+        val bh = seg.maxY - seg.minY + 1
+        val areaFrac = seg.area / cells.toFloat()
+        val fill = seg.area / (bw.toFloat() * bh)
 
         val cellW = w / gw.toFloat()
         val cellH = h / gh.toFloat()
@@ -151,30 +172,74 @@ object InvoiceAnalyzer {
         var sumOut = 0L
         var sumSat = 0.0
         for (i in 0 until cells) {
-            if (comp[i] == bestId) {
-                sumIn += luma[i]
-                sumSat += sat[i]
+            if (sc.comp[i] == seg.id) {
+                sumIn += sc.luma[i]
+                sumSat += sc.sat[i]
             } else {
-                sumOut += luma[i]
+                sumOut += sc.luma[i]
             }
         }
-        val outCount = cells - bestArea
-        val meanIn = sumIn / bestArea.toFloat()
+        val outCount = cells - seg.area
+        val meanIn = sumIn / seg.area.toFloat()
         val contrast = if (outCount > 0) (meanIn - sumOut / outCount.toFloat()) / 255f else 0f
-        val saturation = (sumSat / bestArea).toFloat()
+        val saturation = (sumSat / seg.area).toFloat()
 
-        val textiness = edgeDensity(argb, w, h, gw, gh, comp, bestId, cfg.edgeThreshold)
+        val textiness = edgeDensity(argb, w, h, gw, gh, sc.comp, seg.id, cfg.edgeThreshold)
 
         val m = cfg.regionMargin
         val region = Region(
-            bMinX / gw.toFloat() - m, bMinY / gh.toFloat() - m,
-            (bMaxX + 1) / gw.toFloat() + m, (bMaxY + 1) / gh.toFloat() + m
+            seg.minX / gw.toFloat() - m, seg.minY / gh.toFloat() - m,
+            (seg.maxX + 1) / gw.toFloat() + m, (seg.maxY + 1) / gh.toFloat() + m
         ).clamped()
 
         return InvoiceCandidate(
             InvoiceFeatures(areaFrac, fill, logAspect, contrast, saturation, textiness),
             region
         )
+    }
+
+    /** أكبر مرشح ورقة فقط (السلوك الأصلي). null إن لم يوجد أو كان حجمه خارج المدى. */
+    fun analyze(argb: IntArray, w: Int, h: Int, cfg: Config = Config()): InvoiceCandidate? {
+        val sc = segment(argb, w, h, cfg, null) ?: return null
+        var best: Seg? = null
+        for (s in sc.segs) if (best == null || s.area > best.area) best = s
+        val seg = best ?: return null
+        val areaFrac = seg.area / (sc.gw * sc.gh).toFloat()
+        if (areaFrac < cfg.minAreaFrac || areaFrac > cfg.maxAreaFrac) return null
+        return candidateOf(argb, w, h, cfg, sc, seg)
+    }
+
+    /**
+     * كل مرشحي الورق المعقولين (الأكبر أولًا، حتى [limit])، لا الأكبر فقط. الأكبر قد يكون جدارًا أو
+     * سيارة بينما الفاتورة الأصغر بجانبه؛ فيقيّم الكاشف كلًّا منهم ويختار الأعلى درجة، ويتعلّم التدريب
+     * من الباقي كأمثلة «ليست فاتورة».
+     */
+    fun analyzeAll(
+        argb: IntArray, w: Int, h: Int, cfg: Config = Config(), limit: Int = 5
+    ): List<InvoiceCandidate> {
+        val sc = segment(argb, w, h, cfg, null) ?: return emptyList()
+        val cells = (sc.gw * sc.gh).toFloat()
+        return sc.segs
+            .filter { it.area / cells >= cfg.minAreaFrac && it.area / cells <= cfg.maxAreaFrac }
+            .sortedWith(compareByDescending<Seg> { it.area }.thenBy { it.id })
+            .take(limit)
+            .map { candidateOf(argb, w, h, cfg, sc, it) }
+    }
+
+    /**
+     * أكبر مرشح ورقة داخل [region] فقط (منطقة رسمها المستخدم). أدنى مساحة نصف الحد العادي لأن
+     * المستخدم هو من أكّد أن هنا شيئًا. null إن لم يوجد شيء فاتح داخلها.
+     */
+    fun analyzeWithin(
+        argb: IntArray, w: Int, h: Int, region: Region, cfg: Config = Config()
+    ): InvoiceCandidate? {
+        val sc = segment(argb, w, h, cfg, region) ?: return null
+        var best: Seg? = null
+        for (s in sc.segs) if (best == null || s.area > best.area) best = s
+        val seg = best ?: return null
+        val areaFrac = seg.area / (sc.gw * sc.gh).toFloat()
+        if (areaFrac < cfg.minAreaFrac / 2f || areaFrac > cfg.maxAreaFrac) return null
+        return candidateOf(argb, w, h, cfg, sc, seg)
     }
 
     private fun push(

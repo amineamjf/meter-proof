@@ -13,6 +13,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import com.meterproof.app.delivery.DeliveryStore
+import com.meterproof.app.delivery.InstructionStores
 import com.meterproof.app.delivery.InvoiceTrainer
 import com.meterproof.app.delivery.SampleCodec
 import java.text.SimpleDateFormat
@@ -190,7 +191,8 @@ class DeliveryActivity : Activity() {
     private fun train() {
         Toast.makeText(this, "جارٍ التدريب...", Toast.LENGTH_SHORT).show()
         Thread {
-            val result = store.train()
+            // عينات المعايرة + عينات التعليمات المرسومة على الصور (مستقلة عن أي مهمة أخرى)
+            val result = store.train(extra = InstructionStores.forTask(this).samples())
             runOnUiThread {
                 when (result) {
                     is InvoiceTrainer.Result.Ready -> {

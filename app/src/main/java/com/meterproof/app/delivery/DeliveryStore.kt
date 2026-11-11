@@ -4,7 +4,7 @@ import android.content.Context
 import java.io.File
 
 /**
- * مخزن المعايرة المحلي. يحفظ سمات رقمية وتصنيفها فقط، ولا يحفظ أي صورة أو بكسل.
+ * مخزن المعايرة المحلي لمهمة الفواتير ([TrainingTask.INVOICE]). يحفظ سمات رقمية وتصنيفها فقط، ولا يحفظ أي صورة أو بكسل.
  *
  * - مجلد filesDir/delivery منفصل عن مجلد الأدلة، فلا يدخل التصدير ولا سلسلة البصمات.
  * - لا يغادر الجهاز، ويُمسح كله بـ clear().
@@ -41,8 +41,12 @@ class DeliveryStore(context: Context) {
      * يدرّب من العينات المحفوظة. عند النجاح يُحفظ النموذج، وعند الفشل يُحذف النموذج السابق:
      * إن قالت العينات الحالية إن الكاشف غير موثوق فالأمان أن يتوقف.
      */
-    fun train(now: Long = System.currentTimeMillis()): InvoiceTrainer.Result = synchronized(LOCK) {
-        val r = InvoiceTrainer.train(samples(), now)
+    fun train(
+        now: Long = System.currentTimeMillis(),
+        extra: List<Sample> = emptyList()
+    ): InvoiceTrainer.Result = synchronized(LOCK) {
+        // extra: عينات التعليمات المرسومة (InstructionStore)، تُضاف إلى عينات المعايرة دون أن تُخزَّن معها
+        val r = InvoiceTrainer.train(samples() + extra, now)
         when (r) {
             is InvoiceTrainer.Result.Ready -> modelFile.writeText(ModelCodec.encode(r.model))
             is InvoiceTrainer.Result.NotReady -> modelFile.delete()

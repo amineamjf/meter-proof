@@ -33,6 +33,8 @@ import com.meterproof.app.delivery.CalibrationProbe
 import com.meterproof.app.delivery.DeliveryDetector
 import com.meterproof.app.delivery.DeliveryEventLog
 import com.meterproof.app.delivery.DeliveryRevealProbe
+import com.meterproof.app.delivery.InstructionStores
+import com.meterproof.app.delivery.PlacementPrior
 import com.meterproof.app.delivery.DeliveryStore
 import com.meterproof.app.delivery.Sample
 import com.meterproof.app.privacy.GateEventLog
@@ -695,7 +697,12 @@ class CaptureService : LifecycleService() {
         }
         if (model == null) return null
         val detail = if (settings.deliveryOutlineOnly) InvoiceDetail.OUTLINE_ONLY else InvoiceDetail.FULL
-        return DeliveryRevealProbe(DeliveryDetector(model), detail)
+        val prior = try {
+            InstructionStores.forTask(this).prior()
+        } catch (e: Exception) {
+            PlacementPrior.NONE
+        }
+        return DeliveryRevealProbe(DeliveryDetector(model, prior = prior), detail)
     }
 
     /** يحدد علامات السجل المبصوم والحدث المؤجَّل بحسب قرار البوابة ونتيجة الكاشف. */

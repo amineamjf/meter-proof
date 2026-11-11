@@ -95,6 +95,7 @@ class TrainingActivity : Activity() {
         list = ListView(this).apply { adapter = adapter() }
         root.addView(list, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
+        Ui.apply(this)
 
         worker.execute { runTraining() }
     }

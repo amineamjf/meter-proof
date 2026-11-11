@@ -27,10 +27,19 @@ class SideMenu(
 ) {
     class Dest(val id: String, val title: String, val content: View)
 
-    private val cBg = Color.parseColor("#F3F5F8")
-    private val cInk = Color.parseColor("#1F2933")
-    private val cAccent = Color.parseColor("#1D4ED8")
-    private val cLine = Color.parseColor("#E4E7EC")
+    private val cBg = Ui.BG
+    private val cInk = Ui.INK
+    private val cLine = Ui.BORDER
+
+    private fun iconFor(id: String): Int = when (id) {
+        NavPages.Page.HOME.id -> Ui.Icon.HOME
+        NavPages.Page.PHOTOS.id -> Ui.Icon.PHOTOS
+        NavPages.Page.MAP.id -> Ui.Icon.MAP
+        NavPages.Page.ROUND.id -> Ui.Icon.PIN
+        NavPages.Page.SETTINGS.id -> Ui.Icon.SETTINGS
+        NavPages.Page.EXPORT.id -> Ui.Icon.EXPORT
+        else -> Ui.Icon.LIST
+    }
 
     private fun dp(v: Int) = (v * activity.resources.displayMetrics.density).toInt()
 
@@ -53,16 +62,14 @@ class SideMenu(
         val bar = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setBackgroundColor(Color.WHITE)
+            setBackgroundColor(Ui.BG)
             setPadding(dp(8), dp(28), dp(12), dp(8))
         }
         bar.addView(
             Button(activity).apply {
-                text = "☰"
-                textSize = 20f
-                isAllCaps = false
-                setTextColor(cInk)
-                setBackgroundColor(Color.TRANSPARENT)
+                Ui.style(this, Ui.Kind.GHOST, null, compact = true)
+                setCompoundDrawablesRelative(Ui.icon(activity, Ui.Icon.MENU, cInk, 24), null, null, null)
+                setPadding(dp(14), 0, 0, 0)
                 contentDescription = "القائمة"
                 setOnClickListener { toggle() }
             },
@@ -70,8 +77,7 @@ class SideMenu(
         )
         titleView.apply {
             textSize = 18f
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(cInk)
+            Ui.styleHeading(this)
             setPadding(dp(4), 0, 0, 0)
         }
         bar.addView(titleView, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -95,7 +101,7 @@ class SideMenu(
         // القائمة الجانبية
         drawer.apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.WHITE)
+            setBackgroundColor(Ui.SURFACE)
             setPadding(dp(14), dp(36), dp(14), dp(14))
             visibility = View.GONE
             isClickable = true // لا تمرّر اللمس إلى ما تحتها
@@ -104,18 +110,14 @@ class SideMenu(
             TextView(activity).apply {
                 text = "MeterProof"
                 textSize = 20f
-                setTypeface(typeface, Typeface.BOLD)
-                setTextColor(cInk)
+                Ui.styleHeading(this)
                 setPadding(dp(4), 0, 0, dp(12))
             }
         )
         for (d in dests) {
             val b = Button(activity).apply {
                 text = d.title
-                isAllCaps = false
-                textSize = 15f
-                gravity = Gravity.CENTER_VERTICAL or Gravity.START
-                setPadding(dp(14), dp(10), dp(14), dp(10))
+                Ui.style(this, Ui.Kind.GHOST, iconFor(d.id))
                 setOnClickListener { show(d.id); close() }
             }
             items[d.id] = b
@@ -151,8 +153,7 @@ class SideMenu(
         scroll.scrollTo(0, 0)
         for ((k, b) in items) {
             val on = k == d.id
-            b.background = rounded(if (on) cAccent else Color.parseColor("#EEF2F6"), 10)
-            b.setTextColor(if (on) Color.WHITE else cInk)
+            Ui.style(b, if (on) Ui.Kind.TONAL else Ui.Kind.GHOST, iconFor(k))
         }
     }
 

@@ -116,6 +116,7 @@ class MapActivity : Activity() {
         )
 
         setContentView(root)
+        Ui.apply(this)
     }
 
     override fun onResume() {

@@ -112,11 +112,11 @@ class MainActivity : Activity() {
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     // ألوان الواجهة (نفس لوحة شاشة الجولة)
-    private val cBg = Color.parseColor("#F3F5F8")
-    private val cInk = Color.parseColor("#1F2933")
-    private val cMuted = Color.parseColor("#667085")
-    private val cLine = Color.parseColor("#E4E7EC")
-    private val cAccent = Color.parseColor("#1D4ED8")
+    private val cBg = Ui.BG
+    private val cInk = Ui.INK
+    private val cMuted = Ui.MUTED
+    private val cLine = Ui.BORDER
+    private val cAccent = Ui.ACCENT
 
     private fun rounded(fill: Int, radiusDp: Int, stroke: Int = 0): GradientDrawable =
         GradientDrawable().apply {
@@ -131,8 +131,7 @@ class MainActivity : Activity() {
             this.text = text
             if (bold) {
                 textSize = 16f
-                setTypeface(typeface, Typeface.BOLD)
-                setTextColor(cInk)
+                Ui.styleHeading(this)
                 tag = HEADING_TAG
                 setPadding(0, dp(2), 0, dp(6))
             } else {
@@ -143,14 +142,12 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun button(text: String, onClick: () -> Unit): Button {
+    private fun button(
+        text: String, kind: Ui.Kind = Ui.Kind.SECONDARY, icon: Int? = null, onClick: () -> Unit
+    ): Button {
         return Button(this).apply {
             this.text = text
-            isAllCaps = false
-            textSize = 14f
-            setTextColor(Color.WHITE)
-            background = rounded(cAccent, 12)
-            setPadding(dp(12), dp(10), dp(12), dp(10))
+            Ui.style(this, kind, icon)
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { topMargin = dp(6) }
@@ -172,8 +169,8 @@ class MainActivity : Activity() {
             if (v.tag == HEADING_TAG) {
                 val c = LinearLayout(this).apply {
                     orientation = LinearLayout.VERTICAL
-                    background = rounded(Color.WHITE, 14, cLine)
-                    setPadding(dp(14), dp(12), dp(14), dp(14))
+                    background = rounded(Ui.SURFACE, 16, cLine)
+                    setPadding(dp(16), dp(14), dp(16), dp(16))
                 }
                 col.addView(
                     c,
@@ -208,9 +205,9 @@ class MainActivity : Activity() {
         col.addView(statusView)
 
         col.addView(label("الإعداد الأول على الهاتف", true))
-        col.addView(button("منح الصلاحيات") { requestBase() })
-        col.addView(button("استثناء البطارية") { openBatteryExemption() })
-        col.addView(button("التشغيل التلقائي (شاومي) / إعدادات التطبيق") { openAutostart() })
+        col.addView(button("منح الصلاحيات", Ui.Kind.TONAL, Ui.Icon.SHIELD) { requestBase() })
+        col.addView(button("استثناء البطارية", Ui.Kind.TONAL, Ui.Icon.BATTERY) { openBatteryExemption() })
+        col.addView(button("التشغيل التلقائي (شاومي) / إعدادات التطبيق", Ui.Kind.TONAL, Ui.Icon.SETTINGS) { openAutostart() })
 
         col.addView(label("المجال العشوائي وساعات الدوام", true))
         col.addView(label("الحد الأدنى بين صورتين (دقائق)"))
@@ -231,14 +228,14 @@ class MainActivity : Activity() {
         privacyModeButton = button("") { togglePrivacyMode() }
         col.addView(privacyModeButton)
         updatePhotoOnStopText()
-        col.addView(button("حفظ الإعدادات") { saveSettings(true) })
+        col.addView(button("حفظ الإعدادات", Ui.Kind.PRIMARY, Ui.Icon.CHECK) { saveSettings(true) })
 
         col.addView(label("الجلسة", true))
-        col.addView(button("بدء الجلسة") { startSession() })
-        col.addView(button("إيقاف الجلسة") { CaptureService.stop(this); delayedRefresh() })
-        pauseButton = button("إيقاف مؤقت") { togglePause() }
+        col.addView(button("بدء الجلسة", Ui.Kind.PRIMARY, Ui.Icon.PLAY) { startSession() })
+        col.addView(button("إيقاف الجلسة", Ui.Kind.DANGER, Ui.Icon.STOP) { CaptureService.stop(this); delayedRefresh() })
+        pauseButton = button("إيقاف مؤقت", Ui.Kind.SECONDARY, Ui.Icon.PAUSE) { togglePause() }
         col.addView(pauseButton)
-        col.addView(button("صورة الآن (تُحفظ مع الموقع)") { testCapture() })
+        col.addView(button("صورة الآن (تُحفظ مع الموقع)", Ui.Kind.TONAL, Ui.Icon.PHOTOS) { testCapture() })
 
         col.addView(label("الأدلة المحفوظة (بعد التشويه)", true))
 
@@ -261,7 +258,7 @@ class MainActivity : Activity() {
         nav.addView(next, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         col.addView(nav)
 
-        col.addView(button("معرض الصور وتصنيفها للتدريب") {
+        col.addView(button("معرض الصور وتصنيفها للتدريب", Ui.Kind.TONAL, Ui.Icon.PHOTOS) {
             startActivity(Intent(this, PhotoGalleryActivity::class.java))
         })
 
@@ -281,7 +278,7 @@ class MainActivity : Activity() {
             onMeterTap = { m -> MeterDialog.show(this@MainActivity, m, store) { idx -> showImage(idx) } }
         }
         col.addView(mapView)
-        col.addView(button("فتح الخارطة بملء الشاشة (تحريك وتكبير)") {
+        col.addView(button("فتح الخارطة بملء الشاشة (تحريك وتكبير)", Ui.Kind.TONAL, Ui.Icon.MAP) {
             startActivity(Intent(this, MapActivity::class.java))
         })
         tileInfoView = TextView(this).apply {
@@ -289,9 +286,9 @@ class MainActivity : Activity() {
             setPadding(0, dp(8), 0, dp(4))
         }
         col.addView(tileInfoView)
-        tileDownloadButton = button("تحميل الخارطة حول العدادات والمسار (للعمل دون إنترنت)") { onTileDownloadClick() }
+        tileDownloadButton = button("تحميل الخارطة حول العدادات والمسار (للعمل دون إنترنت)", Ui.Kind.TONAL, Ui.Icon.DOWNLOAD) { onTileDownloadClick() }
         col.addView(tileDownloadButton)
-        col.addView(button("تبديل الطبقة: مخطط / قمر صناعي") { toggleLayer() })
+        col.addView(button("تبديل الطبقة: مخطط / قمر صناعي", Ui.Kind.SECONDARY, Ui.Icon.LAYERS) { toggleLayer() })
         col.addView(label("رابط بلاطات مخصص (اختياري، يتجاوز الطبقتين الافتراضيتين)"))
         tileUrlField = EditText(this).apply {
             hint = "https://…/{z}/{x}/{y}.png?key=…"
@@ -301,14 +298,14 @@ class MainActivity : Activity() {
             textDirection = View.TEXT_DIRECTION_LTR
         }
         col.addView(tileUrlField)
-        col.addView(button("حفظ رابط البلاطات") { saveTileUrl() })
-        col.addView(button("حذف الخارطة المخزّنة") { confirmClearTiles() })
-        col.addView(button("فتح خارطة الإنترنت في المتصفح (احتياطي)") { openMapInBrowser() })
+        col.addView(button("حفظ رابط البلاطات", Ui.Kind.SECONDARY, Ui.Icon.CHECK) { saveTileUrl() })
+        col.addView(button("حذف الخارطة المخزّنة", Ui.Kind.DANGER, Ui.Icon.TRASH) { confirmClearTiles() })
+        col.addView(button("فتح خارطة الإنترنت في المتصفح (احتياطي)", Ui.Kind.GHOST, Ui.Icon.WEB) { openMapInBrowser() })
 
         col.addView(label("التصدير والتحقق", true))
-        exportButton = button("تصدير الصور والسجلات إلى التنزيلات") { doExport() }
+        exportButton = button("تصدير الصور والسجلات إلى التنزيلات", Ui.Kind.PRIMARY, Ui.Icon.EXPORT) { doExport() }
         col.addView(exportButton)
-        col.addView(button("التحقق من سلسلة البصمات") { verifyView.text = store.verify() })
+        col.addView(button("التحقق من سلسلة البصمات", Ui.Kind.SECONDARY, Ui.Icon.SHIELD) { verifyView.text = store.verify() })
         verifyView = TextView(this).apply { textSize = 14f }
         col.addView(verifyView)
 
@@ -331,17 +328,17 @@ class MainActivity : Activity() {
         col.addView(dayLabel)
         summaryView = TextView(this).apply { textSize = 14f }
         col.addView(summaryView)
-        col.addView(button("تصدير ملخص اليوم (PDF) إلى التنزيلات") { exportSummary() })
+        col.addView(button("تصدير ملخص اليوم (PDF) إلى التنزيلات", Ui.Kind.PRIMARY, Ui.Icon.FILE) { exportSummary() })
 
         col.addView(label("جولة العدادات", true))
         col.addView(label("استيراد ملف الجولة، قائمة العدادات الأقرب إليك، وتصوير عداد يربط الصورة والموقع به"))
-        col.addView(button("فتح جولة العدادات") {
+        col.addView(button("فتح جولة العدادات", Ui.Kind.TONAL, Ui.Icon.PIN) {
             startActivity(Intent(this, RoundActivity::class.java))
         })
 
         col.addView(label("كشف تسليم الفواتير", true))
         col.addView(label("معايرة الكاشف على أوراقك، تدريبه، وتفعيله (مغلق افتراضيًا). لا تُحفظ صور للمعايرة"))
-        col.addView(button("فتح كشف تسليم الفواتير") {
+        col.addView(button("فتح كشف تسليم الفواتير", Ui.Kind.TONAL, Ui.Icon.SPARKLE) {
             startActivity(Intent(this, DeliveryActivity::class.java))
         })
 
@@ -378,18 +375,19 @@ class MainActivity : Activity() {
         val sideMenu = SideMenu(this, dests, if (dests.any { it.id == startId }) startId else dests.first().id)
         menu = sideMenu
         setContentView(sideMenu.root)
+        Ui.apply(this)
     }
 
     /** بطاقة اختصارات في الرئيسية: فتح الشاشات الأكثر استعمالًا مباشرة، أو الانتقال إلى صفحة. */
     private fun buildShortcutsCard(): View {
         val sc = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         sc.addView(label("اختصارات", true))
-        sc.addView(button("الخارطة بملء الشاشة") { startActivity(Intent(this, MapActivity::class.java)) })
-        sc.addView(button("معرض الصور وتصنيفها للتدريب") { startActivity(Intent(this, PhotoGalleryActivity::class.java)) })
-        sc.addView(button("جولة العدادات") { startActivity(Intent(this, RoundActivity::class.java)) })
-        sc.addView(button("كشف تسليم الفواتير") { startActivity(Intent(this, DeliveryActivity::class.java)) })
-        sc.addView(button("التصدير والتحقق") { menu?.show(NavPages.Page.EXPORT.id) })
-        sc.addView(button("الإعدادات") { menu?.show(NavPages.Page.SETTINGS.id) })
+        sc.addView(button("الخارطة بملء الشاشة", Ui.Kind.SECONDARY, Ui.Icon.MAP) { startActivity(Intent(this, MapActivity::class.java)) })
+        sc.addView(button("معرض الصور وتصنيفها للتدريب", Ui.Kind.SECONDARY, Ui.Icon.PHOTOS) { startActivity(Intent(this, PhotoGalleryActivity::class.java)) })
+        sc.addView(button("جولة العدادات", Ui.Kind.SECONDARY, Ui.Icon.PIN) { startActivity(Intent(this, RoundActivity::class.java)) })
+        sc.addView(button("كشف تسليم الفواتير", Ui.Kind.SECONDARY, Ui.Icon.SPARKLE) { startActivity(Intent(this, DeliveryActivity::class.java)) })
+        sc.addView(button("التصدير والتحقق", Ui.Kind.SECONDARY, Ui.Icon.EXPORT) { menu?.show(NavPages.Page.EXPORT.id) })
+        sc.addView(button("الإعدادات", Ui.Kind.SECONDARY, Ui.Icon.SETTINGS) { menu?.show(NavPages.Page.SETTINGS.id) })
         groupIntoCards(sc)
         val card = sc.getChildAt(0)
         sc.removeView(card)

@@ -114,6 +114,7 @@ class DeliveryActivity : Activity() {
         col.addView(button("مسح كل بيانات المعايرة") { confirmClear() })
 
         setContentView(ScrollView(this).apply { addView(col) })
+        Ui.apply(this)
     }
 
     // ---------------------------------------------------------------- العرض

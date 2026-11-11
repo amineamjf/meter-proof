@@ -199,6 +199,7 @@ class RoundActivity : Activity() {
         }
         root.addView(listView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
+        Ui.apply(this)
 
         showLocation()
     }

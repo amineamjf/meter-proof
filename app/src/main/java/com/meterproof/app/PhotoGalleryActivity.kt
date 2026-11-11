@@ -105,9 +105,9 @@ class PhotoGalleryActivity : Activity() {
         labelRow.addView(smallButton("مسح") { labelSelected(null) }, weight())
         root.addView(labelRow)
 
-        root.addView(smallButton("🗑 حذف المحدد") { confirmDelete(selected.toList()) })
+        root.addView(smallButton("حذف المحدد", Ui.Kind.DANGER, Ui.Icon.TRASH) { confirmDelete(selected.toList()) })
 
-        root.addView(smallButton("تدرّب على الصور المصنَّفة وأرني النتيجة") {
+        root.addView(smallButton("تدرّب على الصور المصنَّفة وأرني النتيجة", Ui.Kind.PRIMARY, Ui.Icon.SPARKLE) {
             val c = PhotoLabels.counts(labels)
             if (c.invoice + c.none < 4) {
                 toast("صنّف بعض الصور أولًا (فاتورة / بلا فاتورة)")
@@ -215,6 +215,7 @@ class PhotoGalleryActivity : Activity() {
         }
         root.addView(grid, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
+        Ui.apply(this)
         reload()
     }
 
@@ -225,11 +226,9 @@ class PhotoGalleryActivity : Activity() {
 
     private fun weight() = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
 
-    private fun smallButton(text: String, onClick: () -> Unit): Button =
-        Button(this).apply {
-            this.text = text
-            setOnClickListener { onClick() }
-        }
+    private fun smallButton(
+        text: String, kind: Ui.Kind = Ui.Kind.SECONDARY, icon: Int? = null, onClick: () -> Unit
+    ): Button = Ui.button(this, text, kind, icon, compact = true, onClick = onClick)
 
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
 
@@ -402,8 +401,8 @@ class PhotoGalleryActivity : Activity() {
         row.addView(smallButton("غير واضح") { setLabel(Label.UNCLEAR) }, weight())
         row.addView(smallButton("مسح") { setLabel(null) }, weight())
         col.addView(row)
-        col.addView(smallButton("🗑 حذف هذه الصورة") { confirmDelete(listOf(item.id)) { dialog.dismiss() } })
-        col.addView(smallButton("إغلاق") { dialog.dismiss() })
+        col.addView(smallButton("حذف هذه الصورة", Ui.Kind.DANGER, Ui.Icon.TRASH) { confirmDelete(listOf(item.id)) { dialog.dismiss() } })
+        col.addView(smallButton("إغلاق", Ui.Kind.GHOST, Ui.Icon.CLOSE) { dialog.dismiss() })
         dialog.setContentView(col)
         dialog.show()
     }

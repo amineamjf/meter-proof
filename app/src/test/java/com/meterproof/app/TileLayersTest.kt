@@ -11,11 +11,48 @@ import org.junit.Test
 class TileLayersTest {
 
     @Test
-    fun planUrlOrderIsZXY() {
+    fun planUrlIsEsriStreetWithZYXOrder() {
         assertEquals(
-            "https://basemaps.cartocdn.com/rastertiles/voyager/17/62772/52546.png",
+            "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/17/52546/62772",
             TileLayers.build(TileLayers.PLAN, 17, 62772, 52546)
         )
+    }
+
+    @Test
+    fun cartoAlternativeOrderIsZXY() {
+        assertEquals(
+            "https://basemaps.cartocdn.com/rastertiles/voyager/17/62772/52546.png",
+            TileLayers.build(TileLayers.PLAN_ALT, 17, 62772, 52546)
+        )
+    }
+
+    @Test
+    fun esriStreetIsNotMistakenForSatellite() {
+        // كلاهما من arcgisonline.com: التمييز باسم الخدمة لا باسم المزوّد
+        assertFalse(TileLayers.isSatellite(TileLayers.PLAN))
+        assertTrue(TileLayers.isSatellite(TileLayers.SAT))
+        assertEquals(35, TileLayers.avgKb(TileLayers.SAT))
+        assertEquals(15, TileLayers.avgKb(TileLayers.PLAN))
+    }
+
+    @Test
+    fun fallbackSwapsOnlyTheTwoStandardProviders() {
+        assertEquals(TileLayers.PLAN_ALT, TileLayers.fallbackFor(TileLayers.PLAN))
+        assertEquals(TileLayers.PLAN, TileLayers.fallbackFor(" " + TileLayers.PLAN_ALT + " "))
+        assertNull(TileLayers.fallbackFor(TileLayers.SAT))
+        assertNull(TileLayers.fallbackFor("https://t.example.com/{z}/{x}/{y}.png"))
+    }
+
+    @Test
+    fun failoverTriggersAfterConsecutiveFailuresAndResetsOnSuccess() {
+        val f = TileFailover(3)
+        assertFalse(f.onFailure())
+        assertFalse(f.onFailure())
+        f.onSuccess()
+        assertFalse(f.onFailure())
+        assertFalse(f.onFailure())
+        assertTrue(f.onFailure())
+        assertFalse(f.onFailure()) // بدأ العدّ من جديد بعد التحويل
     }
 
     @Test
@@ -43,7 +80,8 @@ class TileLayersTest {
 
     @Test
     fun attributionFollowsTheProvider() {
-        assertEquals("© OpenStreetMap © CARTO", TileLayers.attribution(TileLayers.PLAN))
+        assertEquals("© Esri © OpenStreetMap", TileLayers.attribution(TileLayers.PLAN))
+        assertEquals("© OpenStreetMap © CARTO", TileLayers.attribution(TileLayers.PLAN_ALT))
         assertEquals("© Esri", TileLayers.attribution(TileLayers.SAT))
         assertEquals("© OpenStreetMap © CARTO", TileLayers.attribution("https://x.example/{z}/{x}/{y}.png"))
     }

@@ -8,18 +8,39 @@ import java.security.MessageDigest
  * رابط الطبقة قالب فيه {z} و{x} و{y} (وترتيبها يختلف بين المزوّدين، فلا يُفترض ترتيب).
  */
 object TileLayers {
-    const val PLAN = "https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png"
+    /**
+     * الخارطة العادية الأساسية: Esri World Street Map. اعتُمدت لأن القمر الصناعي (Esri أيضًا) يعمل على
+     * أجهزة المالك بينما ظهرت خلفية CARTO رمادية فارغة. الترتيب {z}/{y}/{x} كالقمر الصناعي.
+     */
+    const val PLAN = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}"
+
+    /** الخارطة العادية البديلة (CARTO Voyager)، تُجرَّب تلقائيًا إن فشلت الأساسية بالتتابع. */
+    const val PLAN_ALT = "https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png"
+
     const val SAT = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
 
     /** الرابط الفعّال: المخصص إن وُجد، وإلا القمر الصناعي إن طُلب، وإلا المخطط. */
     fun resolve(custom: String, satellite: Boolean = false): String =
         custom.trim().ifEmpty { if (satellite) SAT else PLAN }
 
-    fun isSatellite(template: String): Boolean = template.contains("arcgis")
+    /** القمر الصناعي فقط (World_Imagery). الخارطة العادية من Esri أيضًا فلا يكفي البحث عن اسم المزوّد. */
+    fun isSatellite(template: String): Boolean = template.contains("World_Imagery")
+
+    private fun isEsriStreet(template: String): Boolean = template.trim() == PLAN
+
+    /** البديل التلقائي للخارطة العادية، أو null إن لم يكن [template] خارطة عادية افتراضية. */
+    fun fallbackFor(template: String): String? = when (template.trim()) {
+        PLAN -> PLAN_ALT
+        PLAN_ALT -> PLAN
+        else -> null
+    }
 
     /** نص النسب الذي يُرسم على الخارطة (مطلوب مع بيانات OpenStreetMap وصور Esri). */
-    fun attribution(template: String): String =
-        if (isSatellite(template)) "© Esri" else "© OpenStreetMap © CARTO"
+    fun attribution(template: String): String = when {
+        isSatellite(template) -> "© Esri"
+        isEsriStreet(template) -> "© Esri © OpenStreetMap"
+        else -> "© OpenStreetMap © CARTO"
+    }
 
     /**
      * نص النسب المطبوع على خرائط تقرير PDF. للقمر الصناعي هو سطر الإسناد المنشور في صفحة World Imagery
@@ -29,7 +50,8 @@ object TileLayers {
      */
     fun reportAttribution(template: String): String = when {
         isSatellite(template) -> "Sources: Esri, Maxar, Earthstar Geographics, and the GIS User Community"
-        template.trim() == PLAN -> "© OpenStreetMap contributors © CARTO"
+        isEsriStreet(template) -> "Sources: Esri, HERE, Garmin, © OpenStreetMap contributors, and the GIS User Community"
+        template.trim() == PLAN_ALT -> "© OpenStreetMap contributors © CARTO"
         else -> "خلفية الخارطة: مزوّد مخصص"
     }
 
@@ -57,4 +79,25 @@ object TileLayers {
 
     /** متوسط حجم البلاطة بالكيلوبايت (تقدير للعرض فقط، يختلف بين المزوّدين). */
     fun avgKb(template: String): Int = if (isSatellite(template)) 35 else 15
+}
+
+/**
+ * قرار التحويل التلقائي بين مزوّدَي الخارطة العادية. نقي بلا أندرويد.
+ * يعدّ إخفاقات الجلب المتتالية (أي اتصال تمّ ثم رفضه المزوّد أو لم يرجع صورة)، ونجاح واحد يصفّر العدّاد.
+ * لا يُحسب غياب الإنترنت إخفاقًا لأنه لا يعني أن المزوّد معطوب.
+ */
+class TileFailover(private val threshold: Int = 3) {
+    private var consecutive = 0
+
+    /** true عند بلوغ [threshold] إخفاقات متتالية: حان وقت تجربة المزوّد الآخر (ويصفّر العدّاد). */
+    fun onFailure(): Boolean {
+        consecutive++
+        if (consecutive < threshold) return false
+        consecutive = 0
+        return true
+    }
+
+    fun onSuccess() {
+        consecutive = 0
+    }
 }

@@ -196,7 +196,8 @@ class ReportMapPlanTest {
         assertTrue(TileLayers.reportAttribution(TileLayers.SAT).contains("Esri"))
         assertTrue(TileLayers.reportAttribution(TileLayers.SAT).contains("Maxar"))
         assertTrue(TileLayers.reportAttribution(TileLayers.PLAN).contains("OpenStreetMap"))
-        assertTrue(TileLayers.reportAttribution(TileLayers.PLAN).contains("CARTO"))
+        assertTrue(TileLayers.reportAttribution(TileLayers.PLAN).contains("Esri"))
+        assertTrue(TileLayers.reportAttribution(TileLayers.PLAN_ALT).contains("CARTO"))
     }
 
     @Test fun customProviderIsNotMisattributed() {

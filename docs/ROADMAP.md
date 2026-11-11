@@ -73,7 +73,9 @@
 |---|---|
 | `main` | **قديم**، لا يحوي الخارطة ولا الكشف ولا الجولة. لا يُمسّ ولا يُدمج فيه دون موافقة |
 | `merge/faces-plus-redesign` | كل العمل السابق: التصميم، الجولة، الكشف، بوابة الخصوصية، وضع الوجوه، ومنه خارطة MBTiles القديمة |
-| **`feature/pdf-map`** | **فرع العمل الحالي: الخطوة 4 (D1–D4) منجزة في الكود، البناء ناجح.** فوق `feature/side-menu`. انظر `docs/MAP_TILES.md` |
+| **`feature/modern-ui`** | **فرع العمل الحالي:** تصميم عصري موحّد (`Ui.kt`، أيقونات، أزرار، بطاقات) فوق `feature/delete-photos`؛ شكل فقط، البناء ناجح، لم يُرَ على هاتف. التالي: الخطوة 6 (B1–B3) |
+| `feature/delete-photos` | C2 حذف الصور فوق `feature/pdf-map` |
+| `feature/pdf-map` | الخطوة 4 (D1–D4) منجزة في الكود، البناء ناجح.** فوق `feature/side-menu`. انظر `docs/MAP_TILES.md` |
 | `feature/side-menu` | (E1، القائمة الجانبية، منجزة في الكود، البناء ناجح).** فوق `feature/training-visual` |
 | `feature/training-visual` | الخطوة 3 (C4): منجزة في الكود، البناء ناجح. فوق `feature/photo-gallery`: عرض نتيجة التدريب C4. **ابدأ من آخر commit فيه**، وسطر «حالة الخطوة 3» أدناه يبيّن ما تم وما بقي |
 | `feature/photo-gallery` | الخطوة 2: معرض الصور وتصنيفها C1 وC3، البناء نجح على CI. فوق `feature/capture-modes` |

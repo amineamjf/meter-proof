@@ -118,7 +118,8 @@ class TrainingActivity : Activity() {
             var skippedDecode = 0
             val candidates = records.filter {
                 val l = labels[it.optString("id")]
-                l == Label.INVOICE || l == Label.NONE
+                (l == Label.INVOICE || l == Label.NONE) &&
+                    store.imageFile(it.optString("id")).exists() // المحذوفة بيد المستخدم لا تدخل التدريب
             }
             for ((i, r) in candidates.withIndex()) {
                 if (destroyed) return

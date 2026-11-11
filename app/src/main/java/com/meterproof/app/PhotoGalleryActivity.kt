@@ -32,7 +32,9 @@ import java.util.concurrent.Executors
  * (فاتورة موضوعة / بلا فاتورة / غير واضح).
  *
  * التصنيف أحداث جديدة في السجل المبصوم (PHOTO_LABEL) ولا يمسّ الصور ولا سجلاتها.
- * لا يوجد حذف ولا مشاركة هنا عمدًا: الحذف ينتظر موافقة المالك على أسلوبه (انظر docs/ROADMAP.md، C2).
+ * الحذف (C2، بموافقة المالك): بعد تأكيد صريح يُكتب حدث PHOTO_DELETED ببصمة الصورة ثم يُحذف ملفها فقط؛
+ * سجلها يبقى فلا تنكسر السلسلة، ويعرض التحقق «حذف مسجّل» بدل «تلاعب» (انظر DeletionLog).
+ * لا توجد مشاركة هنا عمدًا.
  * التدريب نفسه من الصور المحفوظة هو الخطوة التالية (C4)؛ هذه الشاشة تجهّز العينات وتعدّها فقط.
  */
 class PhotoGalleryActivity : Activity() {
@@ -102,6 +104,8 @@ class PhotoGalleryActivity : Activity() {
         labelRow.addView(smallButton("غير واضح") { labelSelected(Label.UNCLEAR) }, weight())
         labelRow.addView(smallButton("مسح") { labelSelected(null) }, weight())
         root.addView(labelRow)
+
+        root.addView(smallButton("🗑 حذف المحدد") { confirmDelete(selected.toList()) })
 
         root.addView(smallButton("تدرّب على الصور المصنَّفة وأرني النتيجة") {
             val c = PhotoLabels.counts(labels)
@@ -319,6 +323,34 @@ class PhotoGalleryActivity : Activity() {
         return n
     }
 
+    // ---------------------------------------------------------------- الحذف
+
+    /** تأكيد صريح قبل الحذف؛ الحذف لا رجعة فيه لملف الصورة، ويبقى أثره مسجّلًا في الأدلة. */
+    private fun confirmDelete(ids: List<String>, onDone: () -> Unit = {}) {
+        if (ids.isEmpty()) {
+            toast("لم تحدد أي صورة")
+            return
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("حذف ${ids.size} صورة؟")
+            .setMessage(
+                "ستُحذف الصور من الجهاز ولا يمكن استرجاعها.\n" +
+                    "يبقى في سجل الأدلة أثر الحذف (وقته وبصمة الصورة دون الصورة نفسها)، " +
+                    "وسيعرض التحقق «حذف مسجّل» لا «تلاعب».\n" +
+                    "الصور المحذوفة تخرج من الخارطة والتقارير والتدريب."
+            )
+            .setPositiveButton("حذف") { _, _ ->
+                val n = try { store.deletePhotos(ids) } catch (e: Exception) { 0 }
+                ids.forEach { cache.remove(it) }
+                selected.removeAll(ids.toSet())
+                reload()
+                onDone()
+                toast(if (n == ids.size) "حُذفت $n صورة" else "حُذفت $n من ${ids.size} صورة")
+            }
+            .setNegativeButton("إلغاء", null)
+            .show()
+    }
+
     // ---------------------------------------------------------------- العرض الكبير
 
     /** يفك ضغط الصورة بحجم مناسب لتوفير الذاكرة. */
@@ -370,6 +402,7 @@ class PhotoGalleryActivity : Activity() {
         row.addView(smallButton("غير واضح") { setLabel(Label.UNCLEAR) }, weight())
         row.addView(smallButton("مسح") { setLabel(null) }, weight())
         col.addView(row)
+        col.addView(smallButton("🗑 حذف هذه الصورة") { confirmDelete(listOf(item.id)) { dialog.dismiss() } })
         col.addView(smallButton("إغلاق") { dialog.dismiss() })
         dialog.setContentView(col)
         dialog.show()

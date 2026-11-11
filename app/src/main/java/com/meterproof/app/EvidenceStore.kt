@@ -213,7 +213,8 @@ class EvidenceStore(context: Context) {
     /** أوقات الصور المحفوظة (للملخص). */
     @Synchronized
     fun photoTimes(): List<Long> = try {
-        readRecords().mapNotNull { it.optString("t").toLongOrNull() }
+        readRecords().filter { File(imageDir, it.optString("id") + ".jpg").exists() }
+            .mapNotNull { it.optString("t").toLongOrNull() }
     } catch (e: Exception) {
         emptyList()
     }
@@ -237,7 +238,7 @@ class EvidenceStore(context: Context) {
     }
 
     @Synchronized
-    fun count(): Int = try { readRecords().size } catch (e: Exception) { 0 }
+    fun count(): Int = try { imageFiles().size } catch (e: Exception) { 0 }
 
     @Synchronized
     fun lastTime(): Long? = try {
@@ -259,6 +260,25 @@ class EvidenceStore(context: Context) {
             .filter { it.exists() }
     } catch (e: Exception) {
         emptyList()
+    }
+
+    /**
+     * يحذف صور المستخدم المحددة. لكل صورة يُكتب أولًا حدث PHOTO_DELETED ببصمتها ثم يُحذف الملف؛
+     * سجلها يبقى في records.jsonl فلا تنكسر السلسلة. يعيد عدد الصور المحذوفة فعلًا.
+     */
+    @Synchronized
+    fun deletePhotos(ids: Collection<String>, nowMs: Long = System.currentTimeMillis()): Int {
+        val byId = readRecords().associateBy { it.getString("id") }
+        var n = 0
+        for (id in ids) {
+            val r = byId[id] ?: continue
+            val f = File(imageDir, "$id.jpg")
+            if (!f.exists()) continue
+            val detail = DeletionLog.detail(id, r.getString("sha")) ?: continue
+            addEvent(DeletionLog.EVENT, nowMs, null, null, null, detail)
+            if (f.delete()) n++
+        }
+        return n
     }
 
     /** ملف الصورة لمعرّف سجل معيّن. */
@@ -339,6 +359,8 @@ class EvidenceStore(context: Context) {
     fun verify(): String {
         return try {
             val records = readRecords()
+            val deletedByUser = DeletionLog.deleted(events())
+            var recordedDeletions = 0
             var prev = GENESIS
             for ((i, r) in records.withIndex()) {
                 val n = i + 1
@@ -351,14 +373,23 @@ class EvidenceStore(context: Context) {
                 )
                 if (expected != r.getString("hash")) return "❌ بيانات السجل $n مُعدَّلة"
                 val img = File(imageDir, "$id.jpg")
-                if (!img.exists()) return "❌ صورة السجل $n محذوفة"
+                if (!img.exists()) {
+                    // غياب الصورة مقبول فقط إن سبقه حدث «حُذفت بيد المستخدم» ببصمتها (محمي بسلسلة الأحداث)
+                    if (!DeletionLog.isRecordedDeletion(deletedByUser, id, r.getString("sha"))) {
+                        return "❌ صورة السجل $n محذوفة"
+                    }
+                    recordedDeletions++
+                    prev = r.getString("hash")
+                    continue
+                }
                 if (sha256(img.readBytes()) != r.getString("sha")) return "❌ صورة السجل $n مُعدَّلة"
                 prev = r.getString("hash")
             }
             val eventsMsg = verifyEvents()
             if (eventsMsg != null) return eventsMsg
             val evCount = events().size
-            "✅ السلسلة سليمة (${records.size} صورة، $evCount حدث)"
+            val delNote = if (recordedDeletions > 0) "، منها $recordedDeletions حذف مسجّل بيد المستخدم" else ""
+            "✅ السلسلة سليمة (${records.size} سجل صورة$delNote، $evCount حدث)"
         } catch (e: Exception) {
             "❌ ملف السجلات تالف"
         }

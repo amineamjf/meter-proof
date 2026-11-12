@@ -56,6 +56,29 @@ object CapturePolicy {
         return nowMs - stopSinceMs >= PROLONGED_STOP_MS
     }
 
+    /** مهلة المحاولة الثانية بعد صورة الوصول/التوقف، ونافذتها من بداية التوقف. */
+    const val RETRY_DELAY_MS = 12_000L
+    const val RETRY_WINDOW_MS = 60_000L
+
+    /**
+     * محاولة ثانية واحدة فقط لكل توقف: إن كان الكاشف يعمل ولم يجد فاتورة مقبولة في صورة الوصول
+     * (ربما لم يضعها العامل بعد) والعامل ما زال واقفًا ضمن [RETRY_WINDOW_MS] من بداية التوقف.
+     * بلا كاشف فعّال (نموذج غير جاهز أو وضع خصوصية لا يدعمه) لا إعادة أبدًا، ولا ثالثة.
+     */
+    fun shouldRetryStopPhoto(
+        mode: String,
+        hadProbe: Boolean,
+        detected: Boolean,
+        stillStopped: Boolean,
+        alreadyRetried: Boolean,
+        nowMs: Long,
+        stopSinceMs: Long
+    ): Boolean {
+        if (mode != "arrival" && mode != "stop") return false
+        if (!hadProbe || detected || !stillStopped || alreadyRetried) return false
+        return stopSinceMs > 0L && nowMs - stopSinceMs <= RETRY_WINDOW_MS
+    }
+
     /** رموز ثابتة فقط (لا نصوص حرة): تُحفظ في تفاصيل الحدث المبصوم. */
     object Reason {
         const val NO_CAMERA_PERMISSION = "NO_CAMERA_PERMISSION"

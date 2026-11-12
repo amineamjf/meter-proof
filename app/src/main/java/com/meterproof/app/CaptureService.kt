@@ -144,6 +144,11 @@ class CaptureService : LifecycleService() {
     /** نتيجة كشف التسليم للصورة الحالية، تُسجَّل حدثًا بعد حفظ السجل (null إن لا شيء). */
     private class PendingDelivery(val eventType: String, val score: Float, val modelId: String, val detail: InvoiceDetail)
     @Volatile private var pendingDelivery: PendingDelivery? = null
+    /** للمحاولة الثانية: هل عمل الكاشف في هذه اللقطة، وهل وجد فاتورة مقبولة؟ */
+    @Volatile private var captureHadProbe = false
+    @Volatile private var lastCaptureDetected = false
+    /** بداية التوقف الذي استُنفدت فيه المحاولة الثانية (محاولة واحدة لكل توقف). */
+    private var retryUsedForStopSince = 0L
 
     /** تصنيف عينة المعايرة الجارية (true = فاتورة ظاهرة). */
     @Volatile private var calibPositive = false
@@ -692,6 +697,7 @@ class CaptureService : LifecycleService() {
             return null
         }
         captureExtraFlags = captureExtraFlags + GateEventLog.flag(gate.decision.tier)
+        captureHadProbe = probe != null
         if (probe != null) noteDelivery(gate.decision.tier, probe)
         return jpeg
     }
@@ -718,6 +724,7 @@ class CaptureService : LifecycleService() {
     private fun noteDelivery(tier: PrivacyTier, probe: DeliveryRevealProbe) {
         val r = probe.last ?: return
         val type = DeliveryEventLog.eventType(tier, r.state) ?: return
+        lastCaptureDetected = type == DeliveryEventLog.EVENT_DETECTED
         captureExtraFlags = captureExtraFlags + DeliveryEventLog.flags(tier, probe.detail)
         pendingDelivery = PendingDelivery(type, r.score, r.modelId, probe.detail)
     }
@@ -821,6 +828,29 @@ class CaptureService : LifecycleService() {
     }
 
     private fun finishCapture(mode: String) {
+        val now = System.currentTimeMillis()
+        val since = settings.stopSince
+        val retry = settings.active && CapturePolicy.shouldRetryStopPhoto(
+            mode, captureHadProbe, lastCaptureDetected, settings.motionState == "stopped",
+            retryUsedForStopSince == since, now, since
+        )
+        val retryMeter = captureMeterId
+        captureHadProbe = false
+        lastCaptureDetected = false
+        if (retry) {
+            retryUsedForStopSince = since
+            mainHandler.postDelayed({
+                // ما زال الوقوف نفسه ولم تبدأ لقطة أخرى، وإلا فلا إعادة
+                if (settings.active && !capturing && settings.motionState == "stopped" &&
+                    settings.stopSince == since
+                ) {
+                    captureMeterId = retryMeter
+                    captureLocation = lastLocation
+                    captureExtraFlags = setOf("RETRY")
+                    capture(mode)
+                }
+            }, CapturePolicy.RETRY_DELAY_MS)
+        }
         capturing = false
         captureMeterId = -1L
         captureLocation = null

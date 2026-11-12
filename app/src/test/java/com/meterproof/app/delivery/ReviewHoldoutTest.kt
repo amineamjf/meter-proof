@@ -69,4 +69,14 @@ class ReviewHoldoutTest {
         assertTrue(q[0].detected)
         assertEquals(90, q[0].score)
     }
+
+    @Test fun explainerNamesDrivingFeatures() {
+        val model = (InvoiceTrainer.train(samples(30), 1L) as InvoiceTrainer.Result.Ready).model
+        val text = DecisionExplainer.explain(feat(true, 0), model)
+        assertTrue(text, text.contains("رفعها"))
+        val c = DecisionExplainer.contributions(feat(true, 0), model)
+        assertEquals(InvoiceFeatures.SIZE, c.size)
+        assertTrue(c.sumOf { it.value.toDouble() } > 0.0)
+        assertTrue(DecisionExplainer.contributions(feat(false, 0), model).sumOf { it.value.toDouble() } < 0.0)
+    }
 }

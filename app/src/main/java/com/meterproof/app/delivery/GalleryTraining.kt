@@ -46,7 +46,9 @@ object GalleryTraining {
         val noPaper: Boolean,
         val verdict: Verdict,
         /** ما رآه الكاشف: إطار الورقة المكتشفة، يُرسم على الصورة. null إن لم تُوجد ورقة. */
-        val region: Region? = null
+        val region: Region? = null,
+        /** سبب الدرجة بالسمات (من النموذج النهائي)، أو null إن لم يوجد نموذج جاهز أو ورقة. */
+        val why: String? = null
     )
 
     class Report(
@@ -93,7 +95,8 @@ object GalleryTraining {
                 score >= uncertain -> Verdict.UNCERTAIN
                 else -> if (invoice) Verdict.MISSED else Verdict.CORRECT
             }
-            PhotoOutcome(e.id, e.label, score, noPaper, verdict, e.region)
+            val why = if (model != null && e.features != null) DecisionExplainer.explain(e.features, model) else null
+            PhotoOutcome(e.id, e.label, score, noPaper, verdict, e.region, why)
         }
 
         return Report(

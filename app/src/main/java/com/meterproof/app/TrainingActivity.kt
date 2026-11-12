@@ -294,7 +294,7 @@ class TrainingActivity : Activity() {
                 o.score != null -> "الدرجة: ${pct(o.score)}%"
                 else -> "بلا درجة"
             }
-            text.text = "تصنيفك: ${o.label.arabic}\n$score\n$verdict"
+            text.text = "تصنيفك: ${o.label.arabic}\n$score\n$verdict" + (o.why?.let { "\n($it)" } ?: "")
             text.setTextColor(color)
 
             img.tag = o.id

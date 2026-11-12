@@ -134,7 +134,10 @@ class InstructionListActivity : Activity() {
     private fun train() {
         Toast.makeText(this, "جارٍ التدريب...", Toast.LENGTH_SHORT).show()
         Thread {
-            val result = DeliveryStore(this).train(extra = store.samples())
+            val ds = DeliveryStore(this)
+            val result = ds.train(extra = store.samples())
+            val hold = try { ds.holdout(extra = store.samples()) } catch (e: Exception) { null }
+            val holdText = holdoutText(hold)
             ui.post {
                 when (result) {
                     is InvoiceTrainer.Result.Ready -> {
@@ -144,6 +147,7 @@ class InstructionListActivity : Activity() {
                             .setMessage(
                                 "الدقة ${SampleCodec.pct(m.precision)}% والاستدعاء ${SampleCodec.pct(m.recall)}% " +
                                     "(تحقق متقاطع على أمثلتك أنت، وليست بيانات ميدانية مستقلة).\n" +
+                                    holdText +
                                     "لا يعمل الكشف حتى تفعّله من شاشة «كشف تسليم الفواتير»."
                             )
                             .setPositiveButton("حسنًا", null)
@@ -164,6 +168,14 @@ class InstructionListActivity : Activity() {
                 reload()
             }
         }.start()
+    }
+
+    /** سطر القياس على أمثلة محجوزة لم يرها التدريب (أصدق من الدقة المتقاطعة). */
+    private fun holdoutText(h: com.meterproof.app.delivery.HoldoutReport?): String = when {
+        h == null -> "قياس الأمثلة المحجوزة: لا يكفي عدد الأمثلة بعد.\n"
+        !h.trainable -> "قياس الأمثلة المحجوزة: لم يبلغ النموذج الهدف بعد عزل ${h.heldPositives + h.heldNegatives} مثالًا.\n"
+        else -> "أمثلة محجوزة لم يرها التدريب: فواتير اكتُشفت ${h.truePositives} من ${h.heldPositives}، " +
+            "و«بلا فاتورة» قُبلت خطأً ${h.falseAccepts} من ${h.heldNegatives}.\n"
     }
 
     // ---------------------------------------------------------------- القائمة

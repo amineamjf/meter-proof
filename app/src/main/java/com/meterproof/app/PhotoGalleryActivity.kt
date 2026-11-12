@@ -42,7 +42,8 @@ class PhotoGalleryActivity : Activity() {
     private class Item(val id: String, val file: File, val flags: String)
 
     private enum class Filter(val title: String) {
-        ALL("الكل"), UNLABELED("بلا تصنيف"), INVOICE("فاتورة"), NONE("بلا فاتورة"), UNCLEAR("غير واضح")
+        ALL("الكل"), UNLABELED("بلا تصنيف"), INVOICE("فاتورة"), NONE("بلا فاتورة"), UNCLEAR("غير واضح"),
+        REVIEW("للمراجعة")
     }
 
     private lateinit var store: EvidenceStore
@@ -261,7 +262,12 @@ class PhotoGalleryActivity : Activity() {
     }
 
     private fun applyFilter() {
-        shown = all.filter {
+        if (filter == Filter.REVIEW) {
+            // ما قرّره الكاشف في الميدان ولم تصنّفه بعد: غير المؤكد أولًا
+            val order = com.meterproof.app.delivery.ReviewQueue.build(store.events(), labels)
+                .withIndex().associate { it.value.recordId to it.index }
+            shown = all.filter { it.id in order }.sortedBy { order[it.id] }
+        } else shown = all.filter {
             val l = labels[it.id]
             when (filter) {
                 Filter.ALL -> true
@@ -269,6 +275,7 @@ class PhotoGalleryActivity : Activity() {
                 Filter.INVOICE -> l == Label.INVOICE
                 Filter.NONE -> l == Label.NONE
                 Filter.UNCLEAR -> l == Label.UNCLEAR
+                Filter.REVIEW -> false
             }
         }
         for ((f, b) in filterButtons) b.isEnabled = f != filter

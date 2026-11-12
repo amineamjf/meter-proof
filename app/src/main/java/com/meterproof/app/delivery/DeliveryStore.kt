@@ -54,6 +54,12 @@ class DeliveryStore(context: Context) {
         r
     }
 
+    /** قياس على أمثلة محجوزة (لا يحفظ شيئًا ولا يغيّر النموذج المعتمد). */
+    fun holdout(
+        now: Long = System.currentTimeMillis(),
+        extra: List<Sample> = emptyList()
+    ): HoldoutReport? = InvoiceTrainer.holdoutEvaluate(samples() + extra, now)
+
     fun clear() {
         synchronized(LOCK) {
             samplesFile.delete()

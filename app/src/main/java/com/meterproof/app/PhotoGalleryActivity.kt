@@ -107,6 +107,10 @@ class PhotoGalleryActivity : Activity() {
 
         root.addView(smallButton("حذف المحدد", Ui.Kind.DANGER, Ui.Icon.TRASH) { confirmDelete(selected.toList()) })
 
+        root.addView(smallButton("تعليمات تدريب الفاتورة (مناطق: تعرّف / تجاهل)", Ui.Kind.TONAL, Ui.Icon.TAG) {
+            startActivity(android.content.Intent(this, InstructionListActivity::class.java))
+        })
+
         root.addView(smallButton("تدرّب على الصور المصنَّفة وأرني النتيجة", Ui.Kind.PRIMARY, Ui.Icon.SPARKLE) {
             val c = PhotoLabels.counts(labels)
             if (c.invoice + c.none < 4) {
@@ -401,6 +405,16 @@ class PhotoGalleryActivity : Activity() {
         row.addView(smallButton("غير واضح") { setLabel(Label.UNCLEAR) }, weight())
         row.addView(smallButton("مسح") { setLabel(null) }, weight())
         col.addView(row)
+        col.addView(smallButton("علّم المناطق (تدريب الفاتورة)", Ui.Kind.TONAL, Ui.Icon.TAG) {
+            if (PhotoLabels.usableForTraining(item.flags)) {
+                startActivity(
+                    android.content.Intent(this, InstructionEditorActivity::class.java)
+                        .putExtra(InstructionEditorActivity.EXTRA_PHOTO, item.id)
+                )
+            } else {
+                toast("هذه الصورة مجرَّدة أو مخفية الأوجه، فلا تصلح للتعليم")
+            }
+        })
         col.addView(smallButton("حذف هذه الصورة", Ui.Kind.DANGER, Ui.Icon.TRASH) { confirmDelete(listOf(item.id)) { dialog.dismiss() } })
         col.addView(smallButton("إغلاق", Ui.Kind.GHOST, Ui.Icon.CLOSE) { dialog.dismiss() })
         dialog.setContentView(col)

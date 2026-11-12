@@ -62,6 +62,16 @@
             android:label="التدريب من الصور" />
 
         <activity
+            android:name=".InstructionListActivity"
+            android:exported="false"
+            android:label="تعليمات تدريب الفاتورة" />
+
+        <activity
+            android:name=".InstructionEditorActivity"
+            android:exported="false"
+            android:label="تعليم منطقة" />
+
+        <activity
             android:name=".MapActivity"
             android:exported="false"
             android:label="الخارطة" />

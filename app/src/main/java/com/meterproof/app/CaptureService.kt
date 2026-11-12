@@ -511,6 +511,15 @@ class CaptureService : LifecycleService() {
                 .setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, alarmIntent())
             return
         }
+        if (CapturePolicy.skipRandomDuringStop(
+                settings.motionState == "stopped", settings.stopSince, lastStopPhotoAt,
+                System.currentTimeMillis()
+            )
+        ) {
+            // وقفة طويلة أو صُوّر وصولها: لا صورة عشوائية، نؤجّل للموعد العادي التالي
+            scheduleNext()
+            return
+        }
         capture("auto")
     }
 

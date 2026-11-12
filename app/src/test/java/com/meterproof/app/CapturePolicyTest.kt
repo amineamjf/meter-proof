@@ -1,6 +1,7 @@
 package com.meterproof.app
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -46,5 +47,25 @@ class CapturePolicyTest {
         assertEquals(-1, CapturePolicy.intervalIndex(3, 7))
         assertEquals(1, CapturePolicy.stopIndex(15))
         assertEquals(-1, CapturePolicy.stopIndex(45))
+    }
+
+    @Test fun randomNotSkippedWhileMoving() {
+        assertFalse(CapturePolicy.skipRandomDuringStop(false, 1000, 0, 500_000))
+    }
+
+    @Test fun randomSkippedAfterStopPhoto() {
+        assertTrue(CapturePolicy.skipRandomDuringStop(true, 1000, 2000, 10_000))
+    }
+
+    @Test fun randomAllowedEarlyInStopWithoutPhoto() {
+        assertFalse(CapturePolicy.skipRandomDuringStop(true, 1000, 0, 30_000))
+    }
+
+    @Test fun randomSkippedOnProlongedStop() {
+        assertTrue(CapturePolicy.skipRandomDuringStop(true, 1000, 0, 1000 + CapturePolicy.PROLONGED_STOP_MS))
+    }
+
+    @Test fun oldStopPhotoDoesNotCountForNewStop() {
+        assertFalse(CapturePolicy.skipRandomDuringStop(true, 50_000, 1000, 60_000))
     }
 }

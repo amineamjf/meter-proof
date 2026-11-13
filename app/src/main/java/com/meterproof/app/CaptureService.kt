@@ -705,19 +705,32 @@ class CaptureService : LifecycleService() {
     /** كاشف الفواتير لهذا الالتقاط، أو null إن كان معطّلًا أو لا نموذج معايَر (فلا كشف إطلاقًا). */
     private fun buildDeliveryProbe(): DeliveryRevealProbe? {
         if (!settings.deliveryDetection) return null
-        val model = try {
-            DeliveryStore(this).model()
+        val store = DeliveryStore(this)
+        val windowModel = try {
+            store.windowModel()
         } catch (e: Exception) {
             null
         }
-        if (model == null) return null
+        val legacy = if (windowModel == null) {
+            try {
+                store.model()
+            } catch (e: Exception) {
+                null
+            }
+        } else null
+        if (windowModel == null && legacy == null) return null
         val detail = if (settings.deliveryOutlineOnly) InvoiceDetail.OUTLINE_ONLY else InvoiceDetail.FULL
         val prior = try {
             InstructionStores.forTask(this).prior()
         } catch (e: Exception) {
             PlacementPrior.NONE
         }
-        return DeliveryRevealProbe(DeliveryDetector(model, prior = prior), detail)
+        // الكاشف المتعلَّم بالنوافذ هو الأساس؛ القديم احتياط فقط ما دام لا نموذج جديد
+        return if (windowModel != null) {
+            DeliveryRevealProbe(com.meterproof.app.delivery.WindowDetector(windowModel, prior), detail)
+        } else {
+            DeliveryRevealProbe(DeliveryDetector(legacy!!, prior = prior), detail)
+        }
     }
 
     /** يحدد علامات السجل المبصوم والحدث المؤجَّل بحسب قرار البوابة ونتيجة الكاشف. */

@@ -49,6 +49,8 @@ class InstructionListActivity : Activity() {
     private lateinit var list: ListView
     private var rows: List<TrainingInstruction> = emptyList()
 
+    private val WINDOW_MIN = com.meterproof.app.delivery.WindowTrainer.Config().minInvoiceImages
+
     private val ui = Handler(Looper.getMainLooper())
     private val loader = Executors.newFixedThreadPool(2)
     private val cache = object : LruCache<String, Bitmap>(
@@ -112,62 +114,79 @@ class InstructionListActivity : Activity() {
 
     private fun reload() {
         rows = store.list().sortedByDescending { it.createdAt }
-        val extra = store.samples()
-        val manual = try {
-            DeliveryStore(this).samples()
-        } catch (e: Exception) {
-            emptyList()
-        }
-        val pos = extra.count { it.positive } + manual.count { it.positive }
-        val neg = extra.count { !it.positive } + manual.count { !it.positive }
-        val need = PhotoLabels.MIN_PER_CLASS
+        val labels = PhotoLabels.latest(evidence.events())
+        val invImgs = rows.filter { it.kind == InstructionKind.RECOGNIZE }.map { it.photoId }.toSet().size
+        val noneImgs = labels.values.count { it == PhotoLabels.Label.NONE }
+        val need = WINDOW_MIN
         summary.text = "${rows.size} تعليمة (فاتورة: ${rows.count { it.kind == InstructionKind.RECOGNIZE }}، " +
             "تجاهل: ${rows.count { it.kind == InstructionKind.IGNORE }}).\n" +
-            "أمثلة «فاتورة»: $pos، أمثلة «ليست فاتورة»: $neg (يلزم $need من كل نوع على الأقل، " +
-            "وتشمل عينات المعايرة اليدوية).\n" +
-            "المعلَّم هنا أرقام سمات فقط، ولا تُحفظ بكسلات ولا يتغيّر شيء في الصور."
+            "صور فيها مربع «فاتورة»: $invImgs، وصور مصنَّفة «بلا فاتورة»: $noneImgs (يلزم $need من كل نوع على الأقل).\n" +
+            "أرسم مربعًا حول الفاتورة في صور فيها فاتورة، وصنّف صورًا بلا فاتورة. التدريب يقرأ الصور من الذاكرة فقط."
         (list.adapter as BaseAdapter).notifyDataSetChanged()
     }
 
     // ---------------------------------------------------------------- التدريب
 
     private fun train() {
-        Toast.makeText(this, "جارٍ التدريب...", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "جارٍ التدريب (قد يستغرق دقيقة)...", Toast.LENGTH_LONG).show()
         Thread {
-            val ds = DeliveryStore(this)
-            val result = ds.train(extra = store.samples())
-            val hold = try { ds.holdout(extra = store.samples()) } catch (e: Exception) { null }
-            val holdText = holdoutText(hold)
+            val outcome = try {
+                WindowTraining.run(this)
+            } catch (e: Throwable) {
+                null
+            }
             ui.post {
-                when (result) {
-                    is InvoiceTrainer.Result.Ready -> {
-                        val m = result.model.metrics
-                        AlertDialog.Builder(this)
-                            .setTitle("النموذج جاهز")
-                            .setMessage(
-                                "الدقة ${SampleCodec.pct(m.precision)}% والاستدعاء ${SampleCodec.pct(m.recall)}% " +
-                                    "(تحقق متقاطع على أمثلتك أنت، وليست بيانات ميدانية مستقلة).\n" +
-                                    holdText +
-                                    "لا يعمل الكشف حتى تفعّله من شاشة «كشف تسليم الفواتير»."
-                            )
-                            .setPositiveButton("حسنًا", null)
-                            .show()
-                    }
-                    is InvoiceTrainer.Result.NotReady -> {
-                        settings.deliveryDetection = false
-                        AlertDialog.Builder(this)
-                            .setTitle("النموذج غير جاهز، وأُوقف الكشف")
-                            .setMessage(
-                                result.reasons.joinToString("\n") { "• " + GalleryTraining.reasonArabic(it) } +
-                                    "\nأضف تعليمات أكثر وأوضح وبتنوع في الأبواب والإضاءة."
-                            )
-                            .setPositiveButton("حسنًا", null)
-                            .show()
-                    }
+                if (outcome == null) {
+                    settings.deliveryDetection = false
+                    AlertDialog.Builder(this).setMessage("تعذّر التدريب (ذاكرة أو صور تالفة). لم يتغير شيء.")
+                        .setPositiveButton("حسنًا", null).show()
+                } else {
+                    showOutcome(outcome)
                 }
                 reload()
             }
         }.start()
+    }
+
+    private fun showOutcome(o: WindowTraining.Outcome) {
+        val extra = StringBuilder()
+        if (o.invoiceWithoutBox > 0) {
+            extra.append("\n• ${o.invoiceWithoutBox} صورة صنّفتها «فاتورة» بلا مربع، فلا يتعلم منها: " +
+                "افتحها واضغط «علّم المناطق» وارسم مربعًا حول الفاتورة.")
+        }
+        if (o.unreadable > 0) extra.append("\n• ${o.unreadable} صورة تعذّرت قراءتها أو محذوفة أو مجرّدة.")
+        when (val r = o.result) {
+            is com.meterproof.app.delivery.WindowTrainer.Result.Ready -> {
+                val rep = r.report
+                val hold = rep.holdout?.let {
+                    "\nصور محجوزة لم يرها التدريب: اكتُشفت ${it.detected} من ${it.invoiceImages} فاتورة، " +
+                        "وقُبلت ${it.falseAccepts} خطأً من ${it.noneImages} «بلا فاتورة»."
+                } ?: "\n(الصور قليلة لقياس محجوز بعد.)"
+                val problems = rep.problems.size
+                AlertDialog.Builder(this)
+                    .setTitle("النموذج جاهز")
+                    .setMessage(
+                        "على صور التدريب نفسها: أُصيبت ${rep.hit} من ${rep.invoiceImages} فاتورة، " +
+                            "وقُبلت ${rep.falseAccepts} خطأً من ${rep.noneImages} «بلا فاتورة».$hold" +
+                            (if (problems > 0) "\nصور ما زالت خاطئة: $problems (أضف مربعات أدق أو أمثلة أكثر)." else "") +
+                            extra +
+                            "\nلا يعمل الكشف حتى تفعّله من شاشة «كشف تسليم الفواتير»."
+                    )
+                    .setPositiveButton("حسنًا", null)
+                    .show()
+            }
+            is com.meterproof.app.delivery.WindowTrainer.Result.NotReady -> {
+                settings.deliveryDetection = false
+                val counts = "\nصور فيها مربع «فاتورة»: ${o.usedInvoiceImages}، صور «بلا فاتورة»: ${o.usedNoneImages}."
+                AlertDialog.Builder(this)
+                    .setTitle("النموذج غير جاهز، وأُوقف الكشف")
+                    .setMessage(
+                        r.reasons.joinToString("\n") { "• " + GalleryTraining.reasonArabic(it) } + counts + extra
+                    )
+                    .setPositiveButton("حسنًا", null)
+                    .show()
+            }
+        }
     }
 
     /** سطر القياس على أمثلة محجوزة لم يرها التدريب (أصدق من الدقة المتقاطعة). */

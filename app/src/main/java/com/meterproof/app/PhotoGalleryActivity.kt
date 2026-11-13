@@ -112,7 +112,10 @@ class PhotoGalleryActivity : Activity() {
             startActivity(android.content.Intent(this, InstructionListActivity::class.java))
         })
 
-        root.addView(smallButton("تدرّب على الصور المصنَّفة وأرني النتيجة", Ui.Kind.PRIMARY, Ui.Icon.SPARKLE) {
+        root.addView(smallButton("درّب الكاشف (الأساس): مربعات + صور بلا فاتورة", Ui.Kind.PRIMARY, Ui.Icon.SPARKLE) {
+            startActivity(android.content.Intent(this, InstructionListActivity::class.java))
+        })
+        root.addView(smallButton("التقرير القديم على الصور المصنَّفة", Ui.Kind.GHOST, Ui.Icon.SPARKLE) {
             val c = PhotoLabels.counts(labels)
             if (c.invoice + c.none < 4) {
                 toast("صنّف بعض الصور أولًا (فاتورة / بلا فاتورة)")

@@ -70,15 +70,19 @@ class DeliveryDetector(
  * وتبقى last للمستدعي ليسجّل الحدث. قرار الكشف النهائي للسياسة وليس لهذا الصنف.
  */
 class DeliveryRevealProbe(
-    private val detector: DeliveryDetector,
+    private val detect: (Frame) -> DeliveryResult,
     val detail: InvoiceDetail
 ) : RevealProbe {
+    constructor(detector: DeliveryDetector, detail: InvoiceDetail) : this({ detector.detect(it) }, detail)
+
+    constructor(detector: WindowDetector, detail: InvoiceDetail) : this({ detector.detect(it) }, detail)
+
     @Volatile
     var last: DeliveryResult? = null
         private set
 
     override fun propose(frame: Frame): RevealProposal? {
-        val r = detector.detect(frame)
+        val r = detect(frame)
         last = r
         val region = r.region
         return if (r.state == DeliveryState.DETECTED && region != null) {

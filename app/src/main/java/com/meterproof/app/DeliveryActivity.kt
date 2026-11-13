@@ -125,8 +125,16 @@ class DeliveryActivity : Activity() {
         val pos = samples.count { it.positive }
         val neg = samples.size - pos
         val model = store.model()
+        val wm = store.windowModel()
 
         val sb = StringBuilder()
+        if (wm != null) {
+            sb.append("الكاشف المتعلَّم بالنوافذ: جاهز (معرّف ").append(wm.id).append(") من ")
+                .append(wm.invoiceImages).append(" صورة فاتورة و").append(wm.noneImages)
+                .append(" صورة بلا فاتورة. هو المستعمل في الكشف الحي (القديم احتياط فقط).\n")
+        } else {
+            sb.append("الكاشف المتعلَّم بالنوافذ: غير جاهز (درّبه من «تعليمات تدريب الفاتورة»).\n")
+        }
         sb.append("العينات: فاتورة ظاهرة ").append(pos).append("، بلا فاتورة ").append(neg)
             .append(" (المطلوب 15 على الأقل من كل نوع)\n")
         if (model != null) {
@@ -141,7 +149,7 @@ class DeliveryActivity : Activity() {
         sb.append("الكشف: ")
             .append(
                 when {
-                    settings.deliveryDetection && model != null -> "مفعّل"
+                    settings.deliveryDetection && (model != null || wm != null) -> "مفعّل"
                     settings.deliveryDetection -> "مفعّل لكن بلا نموذج صالح، فهو متوقف"
                     else -> "معطّل"
                 }
@@ -220,7 +228,7 @@ class DeliveryActivity : Activity() {
     private fun toggleEnabled() {
         if (settings.deliveryDetection) {
             settings.deliveryDetection = false
-        } else if (store.model() == null) {
+        } else if (!store.detectionReady()) {
             Toast.makeText(this, "لا يمكن التفعيل قبل تدريب نموذج جاهز", Toast.LENGTH_LONG).show()
         } else {
             settings.deliveryDetection = true

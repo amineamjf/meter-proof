@@ -15,6 +15,7 @@ class DeliveryStore(context: Context) {
     private val dir = File(context.applicationContext.filesDir, "delivery").apply { mkdirs() }
     private val samplesFile = File(dir, "samples.txt")
     private val modelFile = File(dir, "model.txt")
+    private val windowModelFile = File(dir, "window_model.txt")
 
     companion object {
         const val MAX_SAMPLES = 400
@@ -60,10 +61,29 @@ class DeliveryStore(context: Context) {
         extra: List<Sample> = emptyList()
     ): HoldoutReport? = InvoiceTrainer.holdoutEvaluate(samples() + extra, now)
 
+    /** نموذج الكاشف بالنوافذ (المتعلَّم من المربعات المرسومة)، أو null. */
+    fun windowModel(): WindowModel? = synchronized(LOCK) {
+        if (!windowModelFile.exists()) null else WindowModelCodec.decode(windowModelFile.readText())
+    }
+
+    /** عند النجاح يُحفظ، وعند الفشل يُحذف السابق (الأمان: عينات اليوم تقول إنه غير موثوق). */
+    fun applyWindowResult(r: WindowTrainer.Result) {
+        synchronized(LOCK) {
+            when (r) {
+                is WindowTrainer.Result.Ready -> windowModelFile.writeText(WindowModelCodec.encode(r.model))
+                is WindowTrainer.Result.NotReady -> windowModelFile.delete()
+            }
+        }
+    }
+
+    /** هل يوجد أي كاشف جاهز (الجديد أو القديم)؟ */
+    fun detectionReady(): Boolean = windowModel() != null || model() != null
+
     fun clear() {
         synchronized(LOCK) {
             samplesFile.delete()
             modelFile.delete()
+            windowModelFile.delete()
         }
     }
 }

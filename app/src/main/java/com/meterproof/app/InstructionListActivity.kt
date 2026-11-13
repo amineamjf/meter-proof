@@ -89,6 +89,16 @@ class InstructionListActivity : Activity() {
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         )
         actions.addView(
+            Ui.button(this, "اقتراحات بنقرة", Ui.Kind.TONAL, Ui.Icon.SPARKLE, compact = true) {
+                if (DeliveryStore(this).windowModel() == null) {
+                    Toast.makeText(this, "درّب أولًا (درّب الآن) ليقترح التطبيق مربعات", Toast.LENGTH_LONG).show()
+                } else {
+                    startActivity(Intent(this, ProposalReviewActivity::class.java))
+                }
+            },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        )
+        actions.addView(
             Ui.button(this, "درّب الآن", Ui.Kind.PRIMARY, Ui.Icon.SPARKLE, compact = true) { train() },
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         )
@@ -128,7 +138,7 @@ class InstructionListActivity : Activity() {
     // ---------------------------------------------------------------- التدريب
 
     private fun train() {
-        Toast.makeText(this, "جارٍ التدريب (قد يستغرق دقيقة)...", Toast.LENGTH_LONG).show()
+        Toast.makeText(this, "جارٍ التدريب (قد يستغرق عدة دقائق)...", Toast.LENGTH_LONG).show()
         Thread {
             val outcome = try {
                 WindowTraining.run(this)
@@ -153,6 +163,16 @@ class InstructionListActivity : Activity() {
         if (o.invoiceWithoutBox > 0) {
             extra.append("\n• ${o.invoiceWithoutBox} صورة صنّفتها «فاتورة» بلا مربع، فلا يتعلم منها: " +
                 "افتحها واضغط «علّم المناطق» وارسم مربعًا حول الفاتورة.")
+        }
+        when (val t = o.twoStage) {
+            is com.meterproof.app.delivery.TwoStageTrainer.Result.Ready ->
+                extra.append("\n• المدقِّق الدلالي (نموذج الرؤية الجاهز) جاهز: على الصور خارج العينة أُصيبت " +
+                    "${t.report.hit} من ${t.report.invoiceImages} فاتورة وقُبلت ${t.report.falseAccepts} خطأً " +
+                    "من ${t.report.noneImages}. وهو المعتمد في الكشف الحي.")
+            is com.meterproof.app.delivery.TwoStageTrainer.Result.NotReady ->
+                extra.append("\n• المدقِّق الدلالي لم يبلغ الهدف (${t.reasons.joinToString { GalleryTraining.reasonArabic(it) }})، " +
+                    "فيعمل كاشف النوافذ وحده.")
+            null -> if (o.twoStageSkipped != null) extra.append("\n• المدقِّق الدلالي لم يُجرَّ: ${o.twoStageSkipped}.")
         }
         if (o.unreadable > 0) extra.append("\n• ${o.unreadable} صورة تعذّرت قراءتها أو محذوفة أو مجرّدة.")
         when (val r = o.result) {

@@ -67,6 +67,11 @@
             android:label="تعليمات تدريب الفاتورة" />
 
         <activity
+            android:name=".ProposalReviewActivity"
+            android:exported="false"
+            android:label="اقتراحات بنقرة" />
+
+        <activity
             android:name=".InstructionEditorActivity"
             android:exported="false"
             android:label="تعليم منطقة" />

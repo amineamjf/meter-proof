@@ -7,6 +7,9 @@ import com.meterproof.app.delivery.DeliveryStore
 import com.meterproof.app.delivery.InstructionKind
 import com.meterproof.app.delivery.InstructionStore
 import com.meterproof.app.delivery.TrainImage
+import com.meterproof.app.delivery.TwoStageTrainer
+import com.meterproof.app.delivery.VCand
+import com.meterproof.app.delivery.VImage
 import com.meterproof.app.delivery.WindowScene
 import com.meterproof.app.delivery.WindowTrainer
 
@@ -22,7 +25,11 @@ object WindowTraining {
         val invoiceWithoutBox: Int,
         val unreadable: Int,
         val usedInvoiceImages: Int,
-        val usedNoneImages: Int
+        val usedNoneImages: Int,
+        /** نتيجة المدقِّق الدلالي (المرحلة الثانية)، أو null إن لم تُجرَّ. */
+        val twoStage: TwoStageTrainer.Result? = null,
+        /** سبب عدم إجراء المرحلة الثانية، إن لم تُجرَ. */
+        val twoStageSkipped: String? = null
     )
 
     private const val MAX_IMAGES = 120
@@ -80,15 +87,56 @@ object WindowTraining {
                 byPhoto[id]?.none { it.kind == InstructionKind.RECOGNIZE } != false
         }
         val result = WindowTrainer.train(images, now)
-        DeliveryStore(context).applyWindowResult(result)
+        val ds = DeliveryStore(context)
+        ds.applyWindowResult(result)
+
+        // المرحلة الثانية: مدقِّق دلالي فوق كاشف النوافذ (لا معنى لها دون كاشف نوافذ جاهز)
+        var two: TwoStageTrainer.Result? = null
+        var skipped: String? = null
+        if (result is WindowTrainer.Result.Ready) {
+            try {
+                val plans = TwoStageTrainer.plan(images, now)
+                if (plans == null) {
+                    skipped = "الصور قليلة للترشيح المتقاطع"
+                } else {
+                    val fold = TwoStageTrainer.folds(images)
+                    val v = ArrayList<VImage>()
+                    var failedDescribe = 0
+                    for ((i, img) in images.withIndex()) {
+                        if (fold[i] < 0) continue
+                        val px = decode(evidence.imageFile(img.id))
+                        if (px == null) { failedDescribe++; continue }
+                        try {
+                            fun conv(c: com.meterproof.app.delivery.Cand): VCand? {
+                                val s = SemanticLabeler.vector(px.first, px.second, px.third, c.region) ?: return null
+                                return VCand(c.stage1, c.hit, s)
+                            }
+                            val cands = plans[i].cands.mapNotNull { conv(it) }
+                            if (cands.size < plans[i].cands.size) failedDescribe++
+                            v.add(VImage(img.id, img.hasInvoice, fold[i], cands, plans[i].extra.mapNotNull { conv(it) }))
+                        } finally {
+                            px.first.fill(0)
+                        }
+                    }
+                    if (failedDescribe > v.size / 4 + 1) {
+                        skipped = "تعذّر وصف الكثير من المرشحين (فشل نموذج الوصف)"
+                    } else {
+                        two = TwoStageTrainer.train(v, now)
+                        ds.saveVerifier((two as? TwoStageTrainer.Result.Ready)?.model)
+                    }
+                }
+            } catch (e: Throwable) {
+                skipped = "تعذّرت المرحلة الثانية (${e.javaClass.simpleName})"
+            }
+        }
         return Outcome(
             result, invoiceWithoutBox, unreadable,
-            images.count { it.hasInvoice }, images.count { it.fullyNegative }
+            images.count { it.hasInvoice }, images.count { it.fullyNegative }, two, skipped
         )
     }
 
     /** يفك الصورة بدقة لا تتجاوز 1280 للضلع الأطول: (بكسلات، عرض، ارتفاع) أو null. */
-    private fun decode(f: java.io.File): Triple<IntArray, Int, Int>? {
+    fun decode(f: java.io.File): Triple<IntArray, Int, Int>? {
         var bmp: Bitmap? = null
         try {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }

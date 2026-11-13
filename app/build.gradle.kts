@@ -63,6 +63,10 @@ dependencies {
     // الإصدار تجريبي (beta) بلا اتفاقية خدمة، لذلك يقع خلف واجهة HazardDetector ويمكن استبداله.
     implementation("com.google.mlkit:segmentation-selfie:16.0.0-beta6")
 
+    // وصف المحتوى على الجهاز (تصنيف الصور): النموذج مضمّن (نحو 6 ميغابايت) ويعمل دون إنترنت.
+    // يُستعمل مدقِّقًا دلاليًا في المرحلة الثانية لكشف الفاتورة (انظر delivery/TwoStage.kt).
+    implementation("com.google.mlkit:image-labeling:17.0.9")
+
     // اختبارات الوحدة للمنطق النقي (التوقف والحركة وملخص اليوم)
     testImplementation("junit:junit:4.13.2")
 }

@@ -340,9 +340,10 @@ class TrainImage(
                     }
                 }
             }
-            val ep = if (fullyNegative) emptyList() else recognize.mapNotNull { scene.describe(it) }
+            val okBoxes = if (fullyNegative) emptyList() else recognize.filter { scene.describe(it) != null }
+            val ep = okBoxes.mapNotNull { scene.describe(it) }
             val en = ignore.mapNotNull { scene.describe(it) }
-            return TrainImage(id, set, label, ep, en, if (fullyNegative) emptyList() else recognize, fullyNegative)
+            return TrainImage(id, set, label, ep, en, okBoxes, fullyNegative)
         }
     }
 }
@@ -390,7 +391,7 @@ object WindowTrainer {
 
     private class Sample(val x: FloatArray, val y: Int, val w: Double)
 
-    private class ImageEval(val imageId: String, val top: Float, val hit: Boolean, val isInvoice: Boolean)
+    internal class ImageEval(val imageId: String, val top: Float, val hit: Boolean, val isInvoice: Boolean)
 
     fun train(images: List<TrainImage>, now: Long, cfg: Config = Config()): Result {
         val evalImgs = images.filter { it.evaluable }
@@ -433,10 +434,10 @@ object WindowTrainer {
         return Result.Ready(model, report)
     }
 
-    private data class Th(val accept: Float, val unc: Float, val prec: Float, val rec: Float, val urec: Float)
+    internal data class Th(val accept: Float, val unc: Float, val prec: Float, val rec: Float, val urec: Float)
 
     /** (أدنى عتبة تحقق الدقة المستهدفة) مع عتبة الشك؛ null إن لم تتحقق دقة الهدف. */
-    private fun chooseThresholds(evals: List<ImageEval>, cfg: Config): Th? {
+    internal fun chooseThresholds(evals: List<ImageEval>, cfg: Config): Th? {
         val invTotal = evals.count { it.isInvoice }
         if (invTotal == 0) return null
         fun events(t: Float) = evals.count { it.top >= t }
@@ -476,7 +477,7 @@ object WindowTrainer {
         return Holdout(hi.size, hn.size, detected, fa)
     }
 
-    private fun evalImage(model: WindowModel, img: TrainImage): ImageEval {
+    internal fun evalImage(model: WindowModel, img: TrainImage): ImageEval {
         val n = img.set.n
         var best = -1f
         var bi = -1
@@ -489,7 +490,7 @@ object WindowTrainer {
     }
 
     /** يدرّب بالتعدين الصعب ويعيد النموذج (بعتبات مؤقتة) وتقييم كل صورة قابلة للتقييم. */
-    private fun fitAll(images: List<TrainImage>, now: Long, cfg: Config): Pair<WindowModel, List<ImageEval>>? {
+    internal fun fitAll(images: List<TrainImage>, now: Long, cfg: Config): Pair<WindowModel, List<ImageEval>>? {
         val d = WindowFeatures.SIZE
         val samples = ArrayList<Sample>()
         val inSet = HashSet<Long>() // (صورة، نافذة) مضافة سلفًا
@@ -589,10 +590,16 @@ object WindowTrainer {
     }
 }
 
-/** كاشف الفاتورة بالنوافذ لإطار حي (نفس واجهة [DeliveryResult] التي تستعملها البوابة). */
+/**
+ * كاشف الفاتورة بالنوافذ لإطار حي (نفس واجهة [DeliveryResult] التي تستعملها البوابة).
+ * مع [verifier] و[semantic]: المرحلة الثانية تدقّق أفضل المرشحين دلاليًا وتقرّر هي. إن فشل وصف كل المرشحين
+ * فلا يُرفع شيء: أقصى ما يخرج «غير مؤكد».
+ */
 class WindowDetector(
     private val model: WindowModel,
-    private val prior: PlacementPrior = PlacementPrior.NONE
+    private val prior: PlacementPrior = PlacementPrior.NONE,
+    private val verifier: VerifierModel? = null,
+    private val semantic: SemanticProvider? = null
 ) {
     fun detect(frame: Frame): DeliveryResult {
         val px = frame.argb()
@@ -603,26 +610,16 @@ class WindowDetector(
         }
     }
 
-    fun detect(px: IntArray, w: Int, h: Int): DeliveryResult {
-        val scene = WindowScene.from(px, w, h) ?: return DeliveryResult(DeliveryState.NONE, 0f, null, model.id)
-        val set = scene.windows()
-        if (set.n == 0) return DeliveryResult(DeliveryState.NONE, 0f, null, model.id)
-        var best = -1f
-        var bi = 0
-        for (i in 0 until set.n) {
-            val s = model.score(set.vecs, i * WindowFeatures.SIZE)
-            if (s > best) { best = s; bi = i }
-        }
-        var region = set.region(bi)
-        // تحسين محلي: إزاحات وتكبير/تصغير حول أفضل نافذة لإطار أضيق
-        var score = best
-        val rw = region.right - region.left
-        val rh = region.bottom - region.top
+    private fun refine(scene: WindowScene, start: Region, startScore: Float): Pair<Region, Float> {
+        var region = start
+        var score = startScore
+        val rw = start.right - start.left
+        val rh = start.bottom - start.top
         for (sc in floatArrayOf(0.8f, 0.9f, 1.0f, 1.12f, 1.25f)) {
             for (dx in floatArrayOf(-0.25f, 0f, 0.25f)) {
                 for (dy in floatArrayOf(-0.25f, 0f, 0.25f)) {
-                    val cx = (region.left + region.right) / 2 + dx * rw
-                    val cy = (region.top + region.bottom) / 2 + dy * rh
+                    val cx = (start.left + start.right) / 2 + dx * rw
+                    val cy = (start.top + start.bottom) / 2 + dy * rh
                     val cand = Region(cx - rw * sc / 2, cy - rh * sc / 2, cx + rw * sc / 2, cy + rh * sc / 2).clamped()
                     val v = scene.describe(cand) ?: continue
                     val s = model.score(v)
@@ -630,14 +627,61 @@ class WindowDetector(
                 }
             }
         }
+        return region to score
+    }
+
+    fun detect(px: IntArray, w: Int, h: Int): DeliveryResult {
+        val scene = WindowScene.from(px, w, h) ?: return DeliveryResult(DeliveryState.NONE, 0f, null, model.id)
+        val set = scene.windows()
+        if (set.n == 0) return DeliveryResult(DeliveryState.NONE, 0f, null, model.id)
+
+        val v = verifier
+        val sem = semantic
+        if (v != null && sem != null) {
+            val cands = Proposals.top(model, set, TwoStageTrainer.CANDIDATES)
+            var bestS = -1f
+            var best: Cand? = null
+            for (c in cands) {
+                val vec = sem.vector(px, w, h, c.region) ?: continue
+                val s = v.score(vec, c.stage1)
+                if (s > bestS) { bestS = s; best = c }
+            }
+            if (best == null) {
+                // لا وصف دلالي لأي مرشح: لا نقبل شيئًا، ونكتفي بإشارة «غير مؤكد» إن كان المرحلة الأولى ترجّح
+                val top = cands.firstOrNull() ?: return DeliveryResult(DeliveryState.NONE, 0f, null, model.id)
+                val st = if (top.stage1 >= model.uncertainThreshold) DeliveryState.UNCERTAIN else DeliveryState.NONE
+                return DeliveryResult(st, top.stage1, expand(top.region), model.id)
+            }
+            val region = refine(scene, best.region, best.stage1).first
+            var state = when {
+                bestS >= v.acceptThreshold -> DeliveryState.DETECTED
+                bestS >= v.uncertainThreshold -> DeliveryState.UNCERTAIN
+                else -> DeliveryState.NONE
+            }
+            val out = expand(region)
+            if (state == DeliveryState.DETECTED && !prior.allowsDetected(out)) state = DeliveryState.UNCERTAIN
+            return DeliveryResult(state, bestS, out, v.id, prior.placementOf(out))
+        }
+
+        var best = -1f
+        var bi = 0
+        for (i in 0 until set.n) {
+            val s = model.score(set.vecs, i * WindowFeatures.SIZE)
+            if (s > best) { best = s; bi = i }
+        }
+        val (region, score) = refine(scene, set.region(bi), best)
         var state = when {
             score >= model.acceptThreshold -> DeliveryState.DETECTED
             score >= model.uncertainThreshold -> DeliveryState.UNCERTAIN
             else -> DeliveryState.NONE
         }
-        if (state == DeliveryState.DETECTED && !prior.allowsDetected(region)) state = DeliveryState.UNCERTAIN
-        val m = 0.02f
-        val out = Region(region.left - m, region.top - m, region.right + m, region.bottom + m).clamped()
+        val out = expand(region)
+        if (state == DeliveryState.DETECTED && !prior.allowsDetected(out)) state = DeliveryState.UNCERTAIN
         return DeliveryResult(state, score, out, model.id, prior.placementOf(out))
+    }
+
+    private fun expand(r: Region): Region {
+        val m = 0.02f
+        return Region(r.left - m, r.top - m, r.right + m, r.bottom + m).clamped()
     }
 }

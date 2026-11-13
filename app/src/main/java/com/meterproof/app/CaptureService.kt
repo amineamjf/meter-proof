@@ -727,7 +727,17 @@ class CaptureService : LifecycleService() {
         }
         // الكاشف المتعلَّم بالنوافذ هو الأساس؛ القديم احتياط فقط ما دام لا نموذج جديد
         return if (windowModel != null) {
-            DeliveryRevealProbe(com.meterproof.app.delivery.WindowDetector(windowModel, prior), detail)
+            val verifier = try {
+                store.verifier()
+            } catch (e: Exception) {
+                null
+            }
+            DeliveryRevealProbe(
+                com.meterproof.app.delivery.WindowDetector(
+                    windowModel, prior, verifier, if (verifier != null) SemanticLabeler else null
+                ),
+                detail
+            )
         } else {
             DeliveryRevealProbe(DeliveryDetector(legacy!!, prior = prior), detail)
         }

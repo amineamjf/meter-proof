@@ -301,14 +301,6 @@ class InstructionEditorActivity : Activity() {
                 saveButton.isEnabled = true
                 when {
                     samples == null -> toast("تعذّر قراءة الصورة")
-                    samples.isEmpty() -> AlertDialog.Builder(this)
-                        .setTitle("لم يجد الكاشف شيئًا هنا")
-                        .setMessage(
-                            "لا توجد ورقة أو سطح فاتح داخل هذه المنطقة، فلا يمكن التعلّم منها. " +
-                                "ارسم المستطيل حول الورقة نفسها (أو المس الإطار الرمادي المتقطّع)."
-                        )
-                        .setPositiveButton("حسنًا", null)
-                        .show()
                     else -> {
                         val ins = TrainingInstruction(
                             id = old?.id ?: InstructionStore.newId(),
@@ -323,7 +315,7 @@ class InstructionEditorActivity : Activity() {
                         if (old == null) store.add(ins) else store.update(ins)
                         toast(
                             "حُفظت التعليمة: ${ins.positives} مثال «فاتورة» و${ins.negatives} مثال «ليست فاتورة». " +
-                                "اضغط «درّب الآن» في قائمة التعليمات لتطبيقها."
+                                "الكاشف الجديد يتعلم من المربع نفسه مباشرة. اضغط «درّب الآن» في قائمة التعليمات لتطبيقها."
                         )
                         finish()
                     }

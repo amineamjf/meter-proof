@@ -16,6 +16,7 @@ class DeliveryStore(context: Context) {
     private val samplesFile = File(dir, "samples.txt")
     private val modelFile = File(dir, "model.txt")
     private val windowModelFile = File(dir, "window_model.txt")
+    private val verifierFile = File(dir, "verifier.txt")
 
     companion object {
         const val MAX_SAMPLES = 400
@@ -70,9 +71,21 @@ class DeliveryStore(context: Context) {
     fun applyWindowResult(r: WindowTrainer.Result) {
         synchronized(LOCK) {
             when (r) {
-                is WindowTrainer.Result.Ready -> windowModelFile.writeText(WindowModelCodec.encode(r.model))
-                is WindowTrainer.Result.NotReady -> windowModelFile.delete()
+                is WindowTrainer.Result.Ready -> { windowModelFile.writeText(WindowModelCodec.encode(r.model)); verifierFile.delete() }
+                is WindowTrainer.Result.NotReady -> { windowModelFile.delete(); verifierFile.delete() }
             }
+        }
+    }
+
+    /** مدقِّق المرحلة الثانية (دلالي)، أو null. */
+    fun verifier(): VerifierModel? = synchronized(LOCK) {
+        if (!verifierFile.exists()) null else VerifierCodec.decode(verifierFile.readText())
+    }
+
+    /** null يحذف المدقِّق (فيعمل كاشف النوافذ وحده). */
+    fun saveVerifier(m: VerifierModel?) {
+        synchronized(LOCK) {
+            if (m == null) verifierFile.delete() else verifierFile.writeText(VerifierCodec.encode(m))
         }
     }
 
@@ -84,6 +97,7 @@ class DeliveryStore(context: Context) {
             samplesFile.delete()
             modelFile.delete()
             windowModelFile.delete()
+            verifierFile.delete()
         }
     }
 }

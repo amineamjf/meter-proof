@@ -30,7 +30,7 @@ class DeliveryStore(context: Context) {
     fun addSample(s: Sample) {
         synchronized(LOCK) {
             val list = (samples() + s).takeLast(MAX_SAMPLES)
-            samplesFile.writeText(SampleCodec.encode(list))
+            AtomicText.write(samplesFile, SampleCodec.encode(list))
         }
     }
 
@@ -50,7 +50,7 @@ class DeliveryStore(context: Context) {
         // extra: عينات التعليمات المرسومة (InstructionStore)، تُضاف إلى عينات المعايرة دون أن تُخزَّن معها
         val r = InvoiceTrainer.train(samples() + extra, now)
         when (r) {
-            is InvoiceTrainer.Result.Ready -> modelFile.writeText(ModelCodec.encode(r.model))
+            is InvoiceTrainer.Result.Ready -> AtomicText.write(modelFile, ModelCodec.encode(r.model))
             is InvoiceTrainer.Result.NotReady -> modelFile.delete()
         }
         r

@@ -84,3 +84,29 @@ class ModelRegistryTest {
         assertNull(reg.stable())
     }
 }
+
+class AtomicTextTest {
+    @Test fun writesAndReplacesWithoutLeavingTemp() {
+        val d = File.createTempFile("atom", "").let { it.delete(); it.mkdirs(); it }
+        val f = File(d, "x.txt")
+        AtomicText.write(f, "one")
+        AtomicText.write(f, "two")
+        assertEquals("two", f.readText())
+        assertFalse(File(d, "x.txt.tmp").exists())
+    }
+
+    @Test fun staleTempDoesNotCorruptStableRead() {
+        val reg = ModelRegistry(File.createTempFile("rgst", "").let { it.delete(); it.mkdirs(); it })
+        val w = WindowModel(
+            FloatArray(WindowFeatures.SIZE), FloatArray(WindowFeatures.SIZE) { 1f },
+            FloatArray(2 * WindowFeatures.SIZE), 0f, 0.6f, 0.4f, 1L, 20, 20, WindowMetrics(0.95f, 0.9f, 0.9f)
+        )
+        val m = ModelRegistry.Meta(0, 1L, "d", 20, 20, 18, 1, 2, 19, 0.95f, 0.9f, -1, -1, -1, -1, false, "c", "", "")
+        reg.submit(m, w, null)
+        // محاكاة إغلاق أثناء كتابة إصدار ثانٍ: ملف مؤقت ناقص بجوار السليم
+        File(File(reg.javaClass.getDeclaredField("modelsDir").also { it.isAccessible = true }.get(reg) as File, ""), "v2.txt.tmp")
+            .writeText("version=2\ngarbage")
+        assertEquals(1, reg.stable()!!.meta.version)
+        assertEquals(1, reg.list().size)
+    }
+}

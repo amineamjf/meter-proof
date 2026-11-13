@@ -95,7 +95,7 @@ class ModelRegistry(private val dir: File) {
             reason = if (ok && meta.reason.isNotEmpty()) meta.reason else reason
         )
         write(m, window, verifier)
-        if (ok) stableFile.writeText(next.toString())
+        if (ok) AtomicText.write(stableFile, next.toString())
         prune()
         return Decision(ok, reason, Entry(m, window, verifier))
     }
@@ -105,7 +105,7 @@ class ModelRegistry(private val dir: File) {
     fun rollback(): Entry? {
         val cur = stable()?.meta?.version ?: return null
         val prev = list().firstOrNull { it.meta.version < cur && it.meta.accepted && it.window != null } ?: return null
-        stableFile.writeText(prev.meta.version.toString())
+        AtomicText.write(stableFile, prev.meta.version.toString())
         return prev
     }
 
@@ -114,7 +114,7 @@ class ModelRegistry(private val dir: File) {
     fun setStable(version: Int): Boolean {
         val e = read(file(version)) ?: return false
         if (e.window == null || !e.meta.accepted) return false
-        stableFile.writeText(version.toString())
+        AtomicText.write(stableFile, version.toString())
         return true
     }
 
@@ -158,7 +158,7 @@ class ModelRegistry(private val dir: File) {
         kv("decision", m.decision); kv("reason", m.reason)
         kv("window", WindowModelCodec.encode(window))
         if (verifier != null) kv("verifier", VerifierCodec.encode(verifier))
-        file(m.version).writeText(sb.toString())
+        AtomicText.write(file(m.version), sb.toString())
     }
 
     private fun read(f: File): Entry? = try {

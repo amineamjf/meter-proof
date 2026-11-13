@@ -31,7 +31,7 @@ class InstructionStore(dir: File) {
     fun add(i: TrainingInstruction) {
         synchronized(LOCK) {
             val all = (list() + i).takeLast(MAX_INSTRUCTIONS)
-            file.writeText(InstructionCodec.encode(all))
+            AtomicText.write(file, InstructionCodec.encode(all))
         }
     }
 
@@ -39,7 +39,7 @@ class InstructionStore(dir: File) {
     fun update(i: TrainingInstruction): Boolean = synchronized(LOCK) {
         val all = list()
         if (all.none { it.id == i.id }) return false
-        file.writeText(InstructionCodec.encode(all.map { if (it.id == i.id) i else it }))
+        AtomicText.write(file, InstructionCodec.encode(all.map { if (it.id == i.id) i else it }))
         true
     }
 
@@ -47,7 +47,7 @@ class InstructionStore(dir: File) {
         val all = list()
         val rest = all.filter { it.id != id }
         if (rest.size == all.size) return false
-        file.writeText(InstructionCodec.encode(rest))
+        AtomicText.write(file, InstructionCodec.encode(rest))
         true
     }
 

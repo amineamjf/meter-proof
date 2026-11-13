@@ -29,7 +29,9 @@ object WindowTraining {
         /** نتيجة المدقِّق الدلالي (المرحلة الثانية)، أو null إن لم تُجرَّ. */
         val twoStage: TwoStageTrainer.Result? = null,
         /** سبب عدم إجراء المرحلة الثانية، إن لم تُجرَ. */
-        val twoStageSkipped: String? = null
+        val twoStageSkipped: String? = null,
+        /** قرار سجل الإصدارات (اعتماد أو رفض) حين نجح التدريب، وإلا null. */
+        val decision: com.meterproof.app.delivery.ModelRegistry.Decision? = null
     )
 
     private const val MAX_IMAGES = 120
@@ -67,7 +69,7 @@ object WindowTraining {
             if (images.size >= MAX_IMAGES) break
             val recognize = list.filter { it.kind == InstructionKind.RECOGNIZE }.map { it.region }
             val ignore = list.filter { it.kind == InstructionKind.IGNORE }.map { it.region }
-            val none = recognize.isEmpty() && labels[photoId] == PhotoLabels.Label.NONE
+            val none = recognize.isEmpty() && labels[photoId].let { it == PhotoLabels.Label.NONE || it == PhotoLabels.Label.SIMILAR }
             val scene = load(photoId)
             if (scene == null) { unreadable++; continue }
             covered.add(photoId)
@@ -76,7 +78,7 @@ object WindowTraining {
         // صور «بلا فاتورة» بلا تعليمات
         for ((id, label) in labels) {
             if (images.size >= MAX_IMAGES) break
-            if (label != PhotoLabels.Label.NONE || id in covered) continue
+            if ((label != PhotoLabels.Label.NONE && label != PhotoLabels.Label.SIMILAR) || id in covered) continue
             val scene = load(id)
             if (scene == null) { unreadable++; continue }
             images.add(TrainImage.build(id, scene, emptyList(), emptyList(), true))
@@ -88,7 +90,6 @@ object WindowTraining {
         }
         val result = WindowTrainer.train(images, now)
         val ds = DeliveryStore(context)
-        ds.applyWindowResult(result)
 
         // المرحلة الثانية: مدقِّق دلالي فوق كاشف النوافذ (لا معنى لها دون كاشف نوافذ جاهز)
         var two: TwoStageTrainer.Result? = null
@@ -122,16 +123,40 @@ object WindowTraining {
                         skipped = "تعذّر وصف الكثير من المرشحين (فشل نموذج الوصف)"
                     } else {
                         two = TwoStageTrainer.train(v, now)
-                        ds.saveVerifier((two as? TwoStageTrainer.Result.Ready)?.model)
                     }
                 }
             } catch (e: Throwable) {
                 skipped = "تعذّرت المرحلة الثانية (${e.javaClass.simpleName})"
             }
         }
+
+        // سجل الإصدارات: يُعتمد الجديد فقط إن لم يتراجع عن المستقر. الفاشل لا يمسّ المستقر.
+        var decision: com.meterproof.app.delivery.ModelRegistry.Decision? = null
+        if (result is WindowTrainer.Result.Ready) {
+            val verifier = (two as? TwoStageTrainer.Result.Ready)?.model
+            val eff = (two as? TwoStageTrainer.Result.Ready)?.report ?: result.report
+            val m = result.model.metrics
+            val vm = verifier?.metrics
+            val h = result.report.holdout
+            val meta = com.meterproof.app.delivery.ModelRegistry.Meta(
+                version = 0, trainedAt = now,
+                device = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}",
+                invoiceImages = eff.invoiceImages, noneImages = eff.noneImages,
+                tp = eff.hit, fp = eff.falseAccepts, fn = eff.invoiceImages - eff.hit,
+                tn = eff.noneImages - eff.falseAccepts,
+                precision = vm?.precision ?: m.precision, recall = vm?.recall ?: m.recall,
+                holdoutDetected = h?.detected ?: -1, holdoutInvoice = h?.invoiceImages ?: -1,
+                holdoutFalse = h?.falseAccepts ?: -1, holdoutNone = h?.noneImages ?: -1,
+                hasVerifier = verifier != null,
+                settings = "windows;rounds=${WindowTrainer.Config().rounds};epochs=${WindowTrainer.Config().epochs};" +
+                    "verifier=${if (verifier != null) "yes" else "no"}",
+                decision = "", reason = ""
+            )
+            decision = ds.registry.submit(meta, result.model, verifier)
+        }
         return Outcome(
             result, invoiceWithoutBox, unreadable,
-            images.count { it.hasInvoice }, images.count { it.fullyNegative }, two, skipped
+            images.count { it.hasInvoice }, images.count { it.fullyNegative }, two, skipped, decision
         )
     }
 

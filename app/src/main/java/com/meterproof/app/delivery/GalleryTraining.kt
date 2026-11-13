@@ -123,3 +123,16 @@ object GalleryTraining {
         else -> code
     }
 }
+
+/** نصوص عربية لأسباب قرار سجل الإصدارات. */
+object ModelLabels {
+    fun reasonArabic(code: String): String = when (code) {
+        "PRECISION_REGRESSED" -> "تراجعت دقته عن المستقر"
+        "RECALL_REGRESSED" -> "تراجع استدعاؤه عن المستقر"
+        "HOLDOUT_FALSE_ACCEPT_WORSE" -> "قبل أماكن بلا فاتورة أكثر في القياس المحجوز"
+        "FIRST_MODEL" -> "أول نموذج"
+        "NOT_WORSE" -> "لم يتراجع عن المستقر"
+        "IMPORTED" -> "مستورد من نسخة سابقة"
+        else -> code
+    }
+}

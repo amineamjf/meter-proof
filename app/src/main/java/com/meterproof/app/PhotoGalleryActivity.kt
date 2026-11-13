@@ -103,6 +103,7 @@ class PhotoGalleryActivity : Activity() {
         labelRow.addView(smallButton("فاتورة") { labelSelected(Label.INVOICE) }, weight())
         labelRow.addView(smallButton("بلا فاتورة") { labelSelected(Label.NONE) }, weight())
         labelRow.addView(smallButton("غير واضح") { labelSelected(Label.UNCLEAR) }, weight())
+        labelRow.addView(smallButton("ورقة مشابهة") { labelSelected(Label.SIMILAR) }, weight())
         labelRow.addView(smallButton("مسح") { labelSelected(null) }, weight())
         root.addView(labelRow)
 
@@ -244,6 +245,7 @@ class PhotoGalleryActivity : Activity() {
         Label.INVOICE -> Color.parseColor("#2E7D32")
         Label.NONE -> Color.parseColor("#C62828")
         Label.UNCLEAR -> Color.parseColor("#EF6C00")
+        Label.SIMILAR -> Color.parseColor("#6A1B9A")
     }
 
     // ---------------------------------------------------------------- البيانات
@@ -413,6 +415,7 @@ class PhotoGalleryActivity : Activity() {
         row.addView(smallButton("فاتورة") { setLabel(Label.INVOICE) }, weight())
         row.addView(smallButton("بلا فاتورة") { setLabel(Label.NONE) }, weight())
         row.addView(smallButton("غير واضح") { setLabel(Label.UNCLEAR) }, weight())
+        row.addView(smallButton("ورقة مشابهة") { setLabel(Label.SIMILAR) }, weight())
         row.addView(smallButton("مسح") { setLabel(null) }, weight())
         col.addView(row)
         col.addView(smallButton("علّم المناطق (تدريب الفاتورة)", Ui.Kind.TONAL, Ui.Icon.TAG) {

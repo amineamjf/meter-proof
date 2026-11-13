@@ -67,6 +67,11 @@
             android:label="تعليمات تدريب الفاتورة" />
 
         <activity
+            android:name=".TrainingLabActivity"
+            android:exported="false"
+            android:label="مختبر التدريب" />
+
+        <activity
             android:name=".ProposalReviewActivity"
             android:exported="false"
             android:label="اقتراحات بنقرة" />

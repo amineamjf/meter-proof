@@ -99,6 +99,9 @@ class DeliveryActivity : Activity() {
                     "(جدران، أبواب، لافتات، أوراق أخرى). إن ظهر وجه أو شخص تُرفض العينة تلقائيًا."
             )
         )
+        col.addView(button("مختبر التدريب (Training Lab)") {
+            startActivity(android.content.Intent(this, TrainingLabActivity::class.java))
+        })
         col.addView(button("التقاط عينة: فاتورة ظاهرة") { CaptureService.calibrate(this, true) })
         col.addView(button("التقاط عينة: بلا فاتورة") { CaptureService.calibrate(this, false) })
 

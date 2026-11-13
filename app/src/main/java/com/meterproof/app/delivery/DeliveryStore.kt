@@ -62,31 +62,34 @@ class DeliveryStore(context: Context) {
         extra: List<Sample> = emptyList()
     ): HoldoutReport? = InvoiceTrainer.holdoutEvaluate(samples() + extra, now)
 
-    /** نموذج الكاشف بالنوافذ (المتعلَّم من المربعات المرسومة)، أو null. */
-    fun windowModel(): WindowModel? = synchronized(LOCK) {
-        if (!windowModelFile.exists()) null else WindowModelCodec.decode(windowModelFile.readText())
-    }
+    /** سجل إصدارات نماذج الفواتير (المستقر، التاريخ، الرجوع). */
+    val registry: ModelRegistry by lazy { ModelRegistry(dir) }
 
-    /** عند النجاح يُحفظ، وعند الفشل يُحذف السابق (الأمان: عينات اليوم تقول إنه غير موثوق). */
-    fun applyWindowResult(r: WindowTrainer.Result) {
+    /** نقل الملفات القديمة (قبل السجل) كإصدار أول معتمد مرة واحدة. */
+    private fun migrateLegacy(device: String) {
         synchronized(LOCK) {
-            when (r) {
-                is WindowTrainer.Result.Ready -> { windowModelFile.writeText(WindowModelCodec.encode(r.model)); verifierFile.delete() }
-                is WindowTrainer.Result.NotReady -> { windowModelFile.delete(); verifierFile.delete() }
+            if (registry.stable() != null || !windowModelFile.exists()) return
+            val w = WindowModelCodec.decode(windowModelFile.readText())
+            if (w != null) {
+                val v = if (verifierFile.exists()) VerifierCodec.decode(verifierFile.readText()) else null
+                registry.importLegacy(w, v, device)
             }
+            windowModelFile.delete()
+            verifierFile.delete()
+            registry.clear()
         }
     }
 
-    /** مدقِّق المرحلة الثانية (دلالي)، أو null. */
+    /** النموذج المستقر المعتمد لكاشف النوافذ، أو null. */
+    fun windowModel(): WindowModel? = synchronized(LOCK) {
+        migrateLegacy("legacy")
+        registry.stable()?.window
+    }
+
+    /** مدقِّق المرحلة الثانية للإصدار المستقر (دلالي)، أو null. */
     fun verifier(): VerifierModel? = synchronized(LOCK) {
-        if (!verifierFile.exists()) null else VerifierCodec.decode(verifierFile.readText())
-    }
-
-    /** null يحذف المدقِّق (فيعمل كاشف النوافذ وحده). */
-    fun saveVerifier(m: VerifierModel?) {
-        synchronized(LOCK) {
-            if (m == null) verifierFile.delete() else verifierFile.writeText(VerifierCodec.encode(m))
-        }
+        migrateLegacy("legacy")
+        registry.stable()?.verifier
     }
 
     /** هل يوجد أي كاشف جاهز (الجديد أو القديم)؟ */
@@ -98,6 +101,7 @@ class DeliveryStore(context: Context) {
             modelFile.delete()
             windowModelFile.delete()
             verifierFile.delete()
+            registry.clear()
         }
     }
 }

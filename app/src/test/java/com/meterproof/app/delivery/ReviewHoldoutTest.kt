@@ -80,3 +80,29 @@ class ReviewHoldoutTest {
         assertTrue(DecisionExplainer.contributions(feat(false, 0), model).sumOf { it.value.toDouble() } < 0.0)
     }
 }
+
+class EvidenceStatusTest {
+    @Test fun statusMapping() {
+        val t = com.meterproof.app.privacy.PrivacyTier.REVEAL
+        val a = com.meterproof.app.privacy.PrivacyTier.ABSTRACT
+        assertEquals(DeliveryEventLog.EvidenceStatus.EVIDENCE_ACCEPTED, DeliveryEventLog.evidenceStatus(t, DeliveryState.DETECTED))
+        assertEquals(DeliveryEventLog.EvidenceStatus.EVIDENCE_UNCERTAIN, DeliveryEventLog.evidenceStatus(a, DeliveryState.UNCERTAIN))
+        assertEquals(DeliveryEventLog.EvidenceStatus.NO_USABLE_EVIDENCE, DeliveryEventLog.evidenceStatus(t, DeliveryState.NONE))
+        assertEquals(DeliveryEventLog.EvidenceStatus.PRIVACY_REJECTED, DeliveryEventLog.evidenceStatus(t, DeliveryState.DETECTED, true))
+    }
+
+    @Test fun detailCarriesStatusAndStaysParseable() {
+        val d = DeliveryEventLog.detail("auto", 0.93f, "w1a2b3c", com.meterproof.app.privacy.InvoiceDetail.FULL,
+            "aaaaaaaa-0001", DeliveryEventLog.EvidenceStatus.EVIDENCE_ACCEPTED)
+        val kv = DeliveryEventLog.parse(d)
+        assertEquals("EVIDENCE_ACCEPTED", kv["ev"])
+        assertEquals("93", kv["score"])
+    }
+
+    @Test fun similarPaperLabelIsCounted() {
+        val c = PhotoLabels.counts(mapOf("a" to PhotoLabels.Label.SIMILAR, "b" to PhotoLabels.Label.NONE))
+        assertEquals(1, c.similar)
+        assertEquals(2, c.total)
+        assertEquals(PhotoLabels.Label.SIMILAR, PhotoLabels.Label.fromCode("SIMILAR"))
+    }
+}

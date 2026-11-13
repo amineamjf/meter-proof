@@ -142,7 +142,10 @@ class CaptureService : LifecycleService() {
     @Volatile private var discardDetail: String? = null
 
     /** نتيجة كشف التسليم للصورة الحالية، تُسجَّل حدثًا بعد حفظ السجل (null إن لا شيء). */
-    private class PendingDelivery(val eventType: String, val score: Float, val modelId: String, val detail: InvoiceDetail)
+    private class PendingDelivery(
+        val eventType: String, val score: Float, val modelId: String, val detail: InvoiceDetail,
+        val status: DeliveryEventLog.EvidenceStatus
+    )
     @Volatile private var pendingDelivery: PendingDelivery? = null
     /** للمحاولة الثانية: هل عمل الكاشف في هذه اللقطة، وهل وجد فاتورة مقبولة؟ */
     @Volatile private var captureHadProbe = false
@@ -749,14 +752,16 @@ class CaptureService : LifecycleService() {
         val type = DeliveryEventLog.eventType(tier, r.state) ?: return
         lastCaptureDetected = type == DeliveryEventLog.EVENT_DETECTED
         captureExtraFlags = captureExtraFlags + DeliveryEventLog.flags(tier, probe.detail)
-        pendingDelivery = PendingDelivery(type, r.score, r.modelId, probe.detail)
+        pendingDelivery = PendingDelivery(
+            type, r.score, r.modelId, probe.detail, DeliveryEventLog.evidenceStatus(tier, r.state)
+        )
     }
 
     /** يكتب حدث الكشف في سلسلة الأحداث بعد حفظ سجل الصورة، مع معرّف السجل. */
     private fun logDelivery(recordId: String, mode: String, loc: Location?) {
         val pd = pendingDelivery ?: return
         pendingDelivery = null
-        val detail = DeliveryEventLog.detail(mode, pd.score, pd.modelId, pd.detail, recordId)
+        val detail = DeliveryEventLog.detail(mode, pd.score, pd.modelId, pd.detail, recordId, pd.status)
         val now = System.currentTimeMillis()
         executor.execute {
             try {

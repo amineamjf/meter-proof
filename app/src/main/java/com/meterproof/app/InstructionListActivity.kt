@@ -25,6 +25,7 @@ import com.meterproof.app.delivery.GalleryTraining
 import com.meterproof.app.delivery.InstructionKind
 import com.meterproof.app.delivery.InstructionStores
 import com.meterproof.app.delivery.InvoiceTrainer
+import com.meterproof.app.delivery.ModelLabels
 import com.meterproof.app.delivery.SampleCodec
 import com.meterproof.app.delivery.TrainingInstruction
 import java.io.File
@@ -126,7 +127,7 @@ class InstructionListActivity : Activity() {
         rows = store.list().sortedByDescending { it.createdAt }
         val labels = PhotoLabels.latest(evidence.events())
         val invImgs = rows.filter { it.kind == InstructionKind.RECOGNIZE }.map { it.photoId }.toSet().size
-        val noneImgs = labels.values.count { it == PhotoLabels.Label.NONE }
+        val noneImgs = labels.values.count { it == PhotoLabels.Label.NONE || it == PhotoLabels.Label.SIMILAR }
         val need = WINDOW_MIN
         summary.text = "${rows.size} تعليمة (فاتورة: ${rows.count { it.kind == InstructionKind.RECOGNIZE }}، " +
             "تجاهل: ${rows.count { it.kind == InstructionKind.IGNORE }}).\n" +
@@ -174,6 +175,13 @@ class InstructionListActivity : Activity() {
                     "فيعمل كاشف النوافذ وحده.")
             null -> if (o.twoStageSkipped != null) extra.append("\n• المدقِّق الدلالي لم يُجرَّ: ${o.twoStageSkipped}.")
         }
+        o.decision?.let { d ->
+            extra.append(
+                if (d.accepted) "\n• اعتُمد النموذج الجديد إصدارًا رقم ${d.entry.meta.version}."
+                else "\n• رُفض النموذج الجديد (إصدار ${d.entry.meta.version}) لأنه ${ModelLabels.reasonArabic(d.reason)}؛ " +
+                    "ما زال الإصدار المستقر السابق معتمدًا."
+            )
+        }
         if (o.unreadable > 0) extra.append("\n• ${o.unreadable} صورة تعذّرت قراءتها أو محذوفة أو مجرّدة.")
         when (val r = o.result) {
             is com.meterproof.app.delivery.WindowTrainer.Result.Ready -> {
@@ -196,10 +204,10 @@ class InstructionListActivity : Activity() {
                     .show()
             }
             is com.meterproof.app.delivery.WindowTrainer.Result.NotReady -> {
-                settings.deliveryDetection = false
+                if (DeliveryStore(this).windowModel() == null) settings.deliveryDetection = false
                 val counts = "\nصور فيها مربع «فاتورة»: ${o.usedInvoiceImages}، صور «بلا فاتورة»: ${o.usedNoneImages}."
                 AlertDialog.Builder(this)
-                    .setTitle("النموذج غير جاهز، وأُوقف الكشف")
+                    .setTitle("النموذج الجديد غير جاهز (لم يتغير المستقر إن وُجد)")
                     .setMessage(
                         r.reasons.joinToString("\n") { "• " + GalleryTraining.reasonArabic(it) } + counts + extra
                     )

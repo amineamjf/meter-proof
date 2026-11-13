@@ -6,6 +6,8 @@ import android.graphics.BitmapFactory
 import com.meterproof.app.delivery.DeliveryStore
 import com.meterproof.app.delivery.InstructionKind
 import com.meterproof.app.delivery.InstructionStore
+import com.meterproof.app.delivery.ImageAugment
+import com.meterproof.app.privacy.Region
 import com.meterproof.app.delivery.TrainImage
 import com.meterproof.app.delivery.TwoStageTrainer
 import com.meterproof.app.delivery.VCand
@@ -51,14 +53,25 @@ object WindowTraining {
         val byPhoto = instructions.groupBy { it.photoId }
         val covered = HashSet<String>()
 
-        fun load(id: String): WindowScene? {
+        /** مشهد الصورة الأصلية، ونسخ التضخيم (للصور التي فيها مربعات فاتورة فقط). */
+        class Loaded(val scene: WindowScene, val aug: List<Pair<ImageAugment.Variant, WindowScene>>)
+
+        fun load(id: String, recognize: List<Region>, ignore: List<Region>, idx: Int): Loaded? {
             val flags = flagsById[id] ?: ""
             if (!PhotoLabels.usableForTraining(flags)) return null
             val f = evidence.imageFile(id)
             if (!f.exists()) return null
             val px = decode(f) ?: return null
             return try {
-                WindowScene.from(px.first, px.second, px.third)
+                val scene = WindowScene.from(px.first, px.second, px.third) ?: return null
+                val aug = ImageAugment.variants(px.first, px.second, px.third, recognize, ignore, idx).mapNotNull { v ->
+                    try {
+                        WindowScene.from(v.px, px.second, px.third)?.let { v to it }
+                    } finally {
+                        v.px.fill(0)
+                    }
+                }
+                Loaded(scene, aug)
             } finally {
                 px.first.fill(0)
             }
@@ -66,22 +79,25 @@ object WindowTraining {
 
         // صور فيها تعليمات (الأحدث أولًا)
         for ((photoId, list) in byPhoto.entries.sortedByDescending { e -> e.value.maxOf { it.createdAt } }) {
-            if (images.size >= MAX_IMAGES) break
+            if (images.count { it.augmentOf == null } >= MAX_IMAGES) break
             val recognize = list.filter { it.kind == InstructionKind.RECOGNIZE }.map { it.region }
             val ignore = list.filter { it.kind == InstructionKind.IGNORE }.map { it.region }
             val none = recognize.isEmpty() && labels[photoId].let { it == PhotoLabels.Label.NONE || it == PhotoLabels.Label.SIMILAR }
-            val scene = load(photoId)
-            if (scene == null) { unreadable++; continue }
+            val loaded = load(photoId, recognize, ignore, images.size)
+            if (loaded == null) { unreadable++; continue }
             covered.add(photoId)
-            images.add(TrainImage.build(photoId, scene, recognize, ignore, none))
+            images.add(TrainImage.build(photoId, loaded.scene, recognize, ignore, none))
+            for ((v, sc) in loaded.aug) {
+                images.add(TrainImage.build("$photoId#${v.suffix}", sc, v.recognize, v.ignore, false, photoId))
+            }
         }
         // صور «بلا فاتورة» بلا تعليمات
         for ((id, label) in labels) {
-            if (images.size >= MAX_IMAGES) break
+            if (images.count { it.augmentOf == null } >= MAX_IMAGES) break
             if ((label != PhotoLabels.Label.NONE && label != PhotoLabels.Label.SIMILAR) || id in covered) continue
-            val scene = load(id)
-            if (scene == null) { unreadable++; continue }
-            images.add(TrainImage.build(id, scene, emptyList(), emptyList(), true))
+            val loaded = load(id, emptyList(), emptyList(), 0)
+            if (loaded == null) { unreadable++; continue }
+            images.add(TrainImage.build(id, loaded.scene, emptyList(), emptyList(), true))
         }
 
         val invoiceWithoutBox = labels.count { (id, l) ->
@@ -156,7 +172,7 @@ object WindowTraining {
         }
         return Outcome(
             result, invoiceWithoutBox, unreadable,
-            images.count { it.hasInvoice }, images.count { it.fullyNegative }, two, skipped, decision
+            images.count { it.hasInvoice && it.augmentOf == null }, images.count { it.fullyNegative }, two, skipped, decision
         )
     }
 

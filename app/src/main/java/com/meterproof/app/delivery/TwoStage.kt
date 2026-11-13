@@ -135,6 +135,7 @@ object TwoStageTrainer {
         var cn = 0
         for ((i, img) in images.withIndex()) {
             when {
+                img.augmentOf != null -> {}
                 img.hasInvoice -> out[i] = ci++ % FOLDS
                 img.fullyNegative -> out[i] = cn++ % FOLDS
             }
@@ -149,8 +150,11 @@ object TwoStageTrainer {
     fun plan(images: List<TrainImage>, now: Long, cfg: WindowTrainer.Config = WindowTrainer.Config()): List<Plan>? {
         val fold = folds(images)
         val plans = MutableList(images.size) { Plan(emptyList(), emptyList()) }
+        val groupFold = HashMap<String, Int>()
+        for ((i, img) in images.withIndex()) if (fold[i] >= 0) groupFold[img.id] = fold[i]
         for (f in 0 until FOLDS) {
-            val trainSet = images.filterIndexed { i, _ -> fold[i] != f }
+            // نسخ التضخيم تتبع طيّة أصلها: لا تدخل تدريب طيّة نسخة من صورة ستُرشَّح بها
+            val trainSet = images.filter { groupFold[it.augmentOf ?: it.id] != f }
             val fitted = WindowTrainer.fitAll(trainSet, now, cfg) ?: return null
             val model = fitted.first
             for ((i, img) in images.withIndex()) {

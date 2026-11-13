@@ -106,3 +106,42 @@ class EvidenceStatusTest {
         assertEquals(PhotoLabels.Label.SIMILAR, PhotoLabels.Label.fromCode("SIMILAR"))
     }
 }
+
+class AugmentAndDiversifyTest {
+    private fun px(w: Int, h: Int) = IntArray(w * h) { (0xFF shl 24) or ((it % w) * 3 and 0xFF) }
+
+    @Test fun flipMirrorsPixelsAndBoxes() {
+        val w = 8; val h = 4
+        val src = px(w, h)
+        val f = ImageAugment.flipH(src, w, h)
+        assertEquals(src[0], f[w - 1])
+        assertEquals(src[w - 1], f[0])
+        assertTrue(ImageAugment.flipH(f, w, h).contentEquals(src))
+        val r = ImageAugment.mirror(com.meterproof.app.privacy.Region(0.1f, 0.2f, 0.4f, 0.5f))
+        assertEquals(0.6f, r.left, 1e-6f); assertEquals(0.9f, r.right, 1e-6f)
+        assertEquals(0.2f, r.top, 1e-6f)
+    }
+
+    @Test fun relightClampsAndKeepsAlpha() {
+        val out = ImageAugment.relight(intArrayOf((0xFF shl 24) or (250 shl 16) or (10 shl 8) or 0), 1.5f, 10)
+        assertEquals(255, (out[0] shr 16) and 0xFF)
+        assertEquals(25, (out[0] shr 8) and 0xFF)
+        assertEquals(0xFF, (out[0] ushr 24))
+    }
+
+    @Test fun onlyInvoiceImagesAreAugmented() {
+        val src = px(8, 8)
+        assertTrue(ImageAugment.variants(src, 8, 8, emptyList(), emptyList(), 0).isEmpty())
+        val v = ImageAugment.variants(src, 8, 8, listOf(com.meterproof.app.privacy.Region(0.1f, 0.1f, 0.3f, 0.3f)), emptyList(), 1)
+        assertEquals(2, v.size)
+        assertEquals(0.7f, v[0].recognize[0].left, 1e-6f)
+    }
+
+    @Test fun diversifyPushesSameStopDuplicatesBack() {
+        val a = ReviewQueue.Item("a", 60, false, 1_000L, 33.5731, -7.5898)
+        val b = ReviewQueue.Item("b", 59, false, 2_000L, 33.5731, -7.5898) // الوقفة نفسها
+        val c = ReviewQueue.Item("c", 40, false, 3_000_000L, 33.6000, -7.6000)
+        val out = ReviewQueue.diversify(listOf(a, b, c)).map { it.recordId }
+        assertEquals(listOf("a", "c", "b"), out)
+    }
+}

@@ -290,11 +290,13 @@ class TrainImage(
     val exactPos: List<FloatArray>,
     val exactNeg: List<FloatArray>,
     val boxes: List<Region>,
-    val fullyNegative: Boolean
+    val fullyNegative: Boolean,
+    /** معرّف الصورة الأصلية إن كانت هذه نسخة مضخَّمة (قلب/إضاءة): للتدريب فقط، لا تدخل أي تقييم. */
+    val augmentOf: String? = null
 ) {
     val hasInvoice get() = boxes.isNotEmpty()
-    /** هل تدخل في التقييم بالصور: صورة فاتورة بمربع، أو صورة «بلا فاتورة» كاملة. */
-    val evaluable get() = hasInvoice || fullyNegative
+    /** هل تدخل في التقييم بالصور: أصلية فقط، فاتورة بمربع أو «بلا فاتورة» كاملة. */
+    val evaluable get() = augmentOf == null && (hasInvoice || fullyNegative)
 
     companion object {
         fun iou(a: Region, b: Region): Float {
@@ -318,7 +320,8 @@ class TrainImage(
          * ما يخرج عن المربعين في صورة فيها فاتورة معلَّمة يُعدّ خلفية.
          */
         fun build(
-            id: String, scene: WindowScene, recognize: List<Region>, ignore: List<Region>, fullyNegative: Boolean
+            id: String, scene: WindowScene, recognize: List<Region>, ignore: List<Region>, fullyNegative: Boolean,
+            augmentOf: String? = null
         ): TrainImage {
             val set = scene.windows()
             val label = ByteArray(set.n)
@@ -343,7 +346,7 @@ class TrainImage(
             val okBoxes = if (fullyNegative) emptyList() else recognize.filter { scene.describe(it) != null }
             val ep = okBoxes.mapNotNull { scene.describe(it) }
             val en = ignore.mapNotNull { scene.describe(it) }
-            return TrainImage(id, set, label, ep, en, okBoxes, fullyNegative)
+            return TrainImage(id, set, label, ep, en, okBoxes, fullyNegative, augmentOf)
         }
     }
 }
@@ -459,13 +462,19 @@ object WindowTrainer {
     }
 
     private fun holdout(images: List<TrainImage>, now: Long, cfg: Config): Holdout? {
-        val inv = images.filter { it.hasInvoice }
-        val neg = images.filter { it.fullyNegative }
+        val inv = images.filter { it.hasInvoice && it.augmentOf == null }
+        val neg = images.filter { it.fullyNegative && it.augmentOf == null }
         fun split(l: List<TrainImage>) = l.withIndex().partition { (i, _) -> i % cfg.holdoutEvery == cfg.holdoutEvery - 1 }
         val (hi, ti) = split(inv)
         val (hn, tn) = split(neg)
         if (hi.isEmpty() || hn.isEmpty()) return null
-        val trainSet = (ti + tn).map { it.value } + images.filter { !it.evaluable }
+        val trainIds = (ti + tn).map { it.value.id }.toSet()
+        val heldIds = (hi + hn).map { it.value.id }.toSet()
+        // نسخ التضخيم تتبع أصلها: لا تدخل تدريب الطيّة نسخة من صورة محجوزة (تسرّب)
+        val trainSet = (ti + tn).map { it.value } + images.filter {
+            (it.augmentOf != null && it.augmentOf in trainIds) ||
+                (it.augmentOf == null && !it.evaluable && it.id !in heldIds)
+        }
         if (ti.size < cfg.minInvoiceImages || tn.size < cfg.minNoneImages) return null
         val fitted = fitAll(trainSet, now, cfg) ?: return null
         val th = chooseThresholds(fitted.second, cfg) ?: return Holdout(hi.size, hn.size, 0, 0)

@@ -144,3 +144,40 @@ class WindowDetectorTest {
         assertNull(WindowModelCodec.decode("garbage"))
     }
 }
+
+class AugmentedTrainingTest {
+    private val W = 640
+    private val H = 480
+    private fun rgb(r: Int, g: Int, b: Int) = (0xFF shl 24) or (r.coerceIn(0, 255) shl 16) or (g.coerceIn(0, 255) shl 8) or b.coerceIn(0, 255)
+
+    private fun inv(rnd: java.util.Random): Pair<IntArray, com.meterproof.app.privacy.Region> {
+        val px = IntArray(W * H) { val n = rnd.nextInt(9) - 4; rgb(150 + n, 150 + n, 150 + n) }
+        val w = 70 + rnd.nextInt(30); val h = (w * 1.3).toInt()
+        val x0 = 40 + rnd.nextInt(W - 80 - w); val y0 = 150 + rnd.nextInt(H - 160 - h)
+        for (y in y0 until y0 + h) for (x in x0 until x0 + w) px[y * W + x] = if ((y / 3) % 2 == 0) rgb(235, 235, 232) else rgb(145, 145, 142)
+        return px to com.meterproof.app.privacy.Region(x0.toFloat() / W, y0.toFloat() / H, (x0 + w).toFloat() / W, (y0 + h).toFloat() / H)
+    }
+
+    @Test fun augmentedCopiesNeverCountAsEvaluableAndStayInTheirFold() {
+        val rnd = java.util.Random(21)
+        val imgs = ArrayList<TrainImage>()
+        for (i in 0 until 12) {
+            val (px, box) = inv(rnd)
+            imgs.add(TrainImage.build("i$i", WindowScene.from(px, W, H)!!, listOf(box), emptyList(), false))
+            for (v in ImageAugment.variants(px, W, H, listOf(box), emptyList(), i)) {
+                imgs.add(TrainImage.build("i$i#${v.suffix}", WindowScene.from(v.px, W, H)!!, v.recognize, v.ignore, false, "i$i"))
+            }
+        }
+        for (i in 0 until 12) {
+            val px = IntArray(W * H) { val n = rnd.nextInt(9) - 4; rgb(140 + n, 140 + n, 140 + n) }
+            imgs.add(TrainImage.build("n$i", WindowScene.from(px, W, H)!!, emptyList(), emptyList(), true))
+        }
+        assertEquals(24, imgs.count { it.evaluable })
+        val folds = TwoStageTrainer.folds(imgs)
+        for ((i, im) in imgs.withIndex()) if (im.augmentOf != null) assertEquals(-1, folds[i])
+        // التدريب يعمل وتقاس الصور الأصلية فقط
+        val r = WindowTrainer.train(imgs, 1L)
+        val rep = when (r) { is WindowTrainer.Result.Ready -> r.report; is WindowTrainer.Result.NotReady -> r.report }
+        assertTrue(rep == null || rep.invoiceImages == 12)
+    }
+}

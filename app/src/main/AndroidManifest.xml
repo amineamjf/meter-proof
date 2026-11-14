@@ -82,6 +82,11 @@
             android:label="تعليم منطقة" />
 
         <activity
+            android:name=".EvidenceBoxActivity"
+            android:exported="false"
+            android:label="تعليم صندوق العداد والباب" />
+
+        <activity
             android:name=".MapActivity"
             android:exported="false"
             android:label="الخارطة" />

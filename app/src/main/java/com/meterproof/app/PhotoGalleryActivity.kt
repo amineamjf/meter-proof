@@ -428,6 +428,16 @@ class PhotoGalleryActivity : Activity() {
                 toast("هذه الصورة مجرَّدة أو مخفية الأوجه، فلا تصلح للتعليم")
             }
         })
+        col.addView(smallButton("علّم صندوق العداد / الباب", Ui.Kind.TONAL, Ui.Icon.TAG) {
+            if (PhotoLabels.usableForTraining(item.flags)) {
+                startActivity(
+                    android.content.Intent(this, EvidenceBoxActivity::class.java)
+                        .putExtra(EvidenceBoxActivity.EXTRA_PHOTO, item.id)
+                )
+            } else {
+                toast("هذه الصورة مجرَّدة أو مخفية الأوجه، فلا تصلح للتعليم")
+            }
+        })
         col.addView(smallButton("حذف هذه الصورة", Ui.Kind.DANGER, Ui.Icon.TRASH) { confirmDelete(listOf(item.id)) { dialog.dismiss() } })
         col.addView(smallButton("إغلاق", Ui.Kind.GHOST, Ui.Icon.CLOSE) { dialog.dismiss() })
         dialog.setContentView(col)

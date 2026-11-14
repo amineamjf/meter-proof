@@ -71,6 +71,8 @@ class CaptureService : LifecycleService() {
         private const val EXTRA_MOCK = "mock"
 
         private const val RETRY_WHILE_WALKING_MS = 15_000L
+        /** أقل زمن بعد فتح الكاميرا قبل الالتقاط (تعريض أولي)، حتى لو انتهى التركيز أسرع. */
+        private const val MIN_CAMERA_WARMUP_MS = 550L
         private const val CHANNEL_ID = "meterproof_session"
         private const val NOTIF_ID = 1001
 
@@ -304,6 +306,7 @@ class CaptureService : LifecycleService() {
                     location.accuracy, if (location.hasSpeed()) location.speed else null
                 )
             )
+            maybeProximityArrival(location)
         }
 
         @Deprecated("Deprecated in Java")
@@ -312,6 +315,46 @@ class CaptureService : LifecycleService() {
         override fun onProviderEnabled(provider: String) {}
 
         override fun onProviderDisabled(provider: String) {}
+    }
+
+    private var lastProximityCheckAt = 0L
+    private var lastProximityCaptureAt = 0L
+    private val proximityAttempts = HashMap<Long, Long>()
+
+    /**
+     * صورة وصول فور دخول نطاق عداد لم يُوثَّق وصوله (دون انتظار توقف 30 ثانية)، إن لم يكن العامل ماشيًا ولا مسرعًا.
+     * لا تغيّر مسار التوقف: صورة التوقف تبقى كما هي، وهذا يضيف الالتقاط المبكر فقط.
+     */
+    private fun maybeProximityArrival(location: Location) {
+        if (!settings.active || settings.paused || capturing) return
+        val speed = if (location.hasSpeed()) location.speed else null
+        if (!ArrivalTrigger.motionOk(walking, speed)) return
+        val now = System.currentTimeMillis()
+        if (now - lastProximityCheckAt < ArrivalTrigger.CHECK_EVERY_MS) return
+        lastProximityCheckAt = now
+        val fix = MotionTracker.Fix(now, location.latitude, location.longitude, location.accuracy, speed)
+        executor.execute {
+            val found: Arrival? = try {
+                findArrival(fix)
+            } catch (e: Exception) {
+                null
+            }
+            if (found == null) return@execute
+            val arrival: Arrival = found
+            mainHandler.post {
+                val t = System.currentTimeMillis()
+                if (capturing || !settings.active || settings.paused || walking) return@post
+                val id = arrival.meter.id
+                if (!ArrivalTrigger.shouldFire(t, proximityAttempts[id] ?: 0L, lastProximityCaptureAt)) return@post
+                proximityAttempts[id] = t
+                lastProximityCaptureAt = t
+                lastStopPhotoAt = t // يمنع صورة توقف مزدوجة فورية
+                captureMeterId = id
+                captureLocation = lastLocation
+                captureExtraFlags = if (arrival.ambiguous) setOf("MULTI_NEAR") else emptySet()
+                capture("arrival")
+            }
+        }
     }
 
     override fun onCreate() {
@@ -568,9 +611,33 @@ class CaptureService : LifecycleService() {
                     .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
                     .build()
                 cp.unbindAll()
-                cp.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, imageCapture)
-                // انتظار قصير حتى يثبت التعريض والتركيز بعد فتح الكاميرا الباردة
-                mainHandler.postDelayed({ takePicture(imageCapture, mode) }, 1200L)
+                val camera = cp.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, imageCapture)
+                // نلتقط حين يستقر التركيز والتعريض (غالبًا أقل من ثانية)، وبحد أقصى 1.2 ثانية كما كان سابقًا:
+                // لا أبطأ من الطريقة القديمة أبدًا، وأسرع حين تستجيب الكاميرا بسرعة.
+                val bindAt = SystemClock.elapsedRealtime()
+                val fired = java.util.concurrent.atomic.AtomicBoolean(false)
+                val go = { if (fired.compareAndSet(false, true)) takePicture(imageCapture, mode) }
+                mainHandler.postDelayed({ go() }, 1200L)
+                mainHandler.postDelayed({
+                    if (fired.get()) return@postDelayed
+                    try {
+                        val point = androidx.camera.core.SurfaceOrientedMeteringPointFactory(1f, 1f)
+                            .createPoint(0.5f, 0.5f)
+                        val action = androidx.camera.core.FocusMeteringAction.Builder(
+                            point,
+                            androidx.camera.core.FocusMeteringAction.FLAG_AF or
+                                androidx.camera.core.FocusMeteringAction.FLAG_AE or
+                                androidx.camera.core.FocusMeteringAction.FLAG_AWB
+                        ).build()
+                        val result = camera.cameraControl.startFocusAndMetering(action)
+                        result.addListener({
+                            val wait = (MIN_CAMERA_WARMUP_MS - (SystemClock.elapsedRealtime() - bindAt)).coerceAtLeast(0L)
+                            mainHandler.postDelayed({ go() }, wait)
+                        }, ContextCompat.getMainExecutor(this))
+                    } catch (e: Exception) {
+                        // المؤقت الاحتياطي (1.2 ثانية) يلتقط
+                    }
+                }, 300L)
             } catch (e: Exception) {
                 settings.lastError = "فشل فتح الكاميرا: ${e.javaClass.simpleName}"
                 logFailure(mode, CapturePolicy.Reason.CAMERA_OPEN_FAILED)

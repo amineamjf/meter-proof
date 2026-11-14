@@ -142,7 +142,7 @@ object PdfReport {
                 val o = mapRenderer.drawBackground(canvas, overview)
                 tileOutcome = o
                 if (o.drawn > 0) {
-                    MapRenderer(1.2f).draw(
+                    MapRenderer(1.2f, compact = true).draw(
                         canvas, mapW, mapH, track, photos, summary.stops, -1,
                         mapRenderer.projector(overview), meters
                     )
@@ -154,7 +154,7 @@ object PdfReport {
             }
         }
         if (!drewTiles) {
-            MapRenderer(1.2f).draw(canvas, mapW, mapH, track, photos, summary.stops, -1, null, meters)
+            MapRenderer(1.2f, compact = true).draw(canvas, mapW, mapH, track, photos, summary.stops, -1, null, meters)
         }
         canvas.restore()
         y += mapH + 6f
@@ -193,7 +193,7 @@ object PdfReport {
                 canvas.clipRect(0f, 0f, mapW, dh)
                 try {
                     mapRenderer.drawBackground(canvas, dv)
-                    MapRenderer(1.2f).draw(
+                    MapRenderer(1.2f, compact = true).draw(
                         canvas, mapW, dh, track, photos, summary.stops, -1,
                         mapRenderer.projector(dv), meters
                     )

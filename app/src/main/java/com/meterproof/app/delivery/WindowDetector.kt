@@ -377,6 +377,18 @@ object WindowTrainer {
     /** مقاييس الصور المحجوزة: لم يرها التدريب ولا اختيار العتبة. */
     data class Holdout(val invoiceImages: Int, val noneImages: Int, val detected: Int, val falseAccepts: Int)
 
+    /**
+     * أفضل ما يمكن بلوغه على صور التدريب نفسها (تفاؤلي)، يُحسب دائمًا ليُفهم لماذا رُفض النموذج:
+     * [hitsAtZeroWrong] فواتير تُكتشف لو لم يُقبل أي خطأ، و[hitsAtRecall80]/[wrongAtRecall80] ما يُكتشف وما يُقبل خطأً
+     * عند هدف 80% من الفواتير (null إن لم يبلغه النموذج أصلًا).
+     */
+    data class Diagnosis(
+        val invoiceTotal: Int,
+        val hitsAtZeroWrong: Int,
+        val hitsAtRecall80: Int?,
+        val wrongAtRecall80: Int?
+    )
+
     class Report(
         val invoiceImages: Int,
         val noneImages: Int,
@@ -384,7 +396,8 @@ object WindowTrainer {
         val hit: Int,
         val falseAccepts: Int,
         val holdout: Holdout?,
-        val problems: List<Problem>
+        val problems: List<Problem>,
+        val diagnosis: Diagnosis? = null
     )
 
     sealed class Result {
@@ -422,7 +435,7 @@ object WindowTrainer {
                 fa++; problems.add(Problem(e.imageId, Problem.Kind.FALSE_ACCEPT, e.top))
             }
         }
-        val report = Report(inv, none, hit, fa, holdout, problems)
+        val report = Report(inv, none, hit, fa, holdout, problems, diagnose(evals))
         if (th == null) return Result.NotReady(listOf("LOW_PRECISION"), report)
 
         val (acc, unc, prec, rec, urec) = th
@@ -435,6 +448,21 @@ object WindowTrainer {
             WindowMetrics(prec, rec, urec)
         )
         return Result.Ready(model, report)
+    }
+
+    internal fun diagnose(evals: List<ImageEval>): Diagnosis? {
+        val invTotal = evals.count { it.isInvoice }
+        if (invTotal == 0) return null
+        val hitTops = evals.filter { it.isInvoice && it.hit }.map { it.top }.sortedDescending()
+        // كل ما ليس إصابة صحيحة يُعدّ خطأً إن قُبل: صور بلا فاتورة، وفواتير أُصيب مكان آخر فيها
+        val wrongTops = evals.filter { !(it.isInvoice && it.hit) }.map { it.top }
+        val t0 = wrongTops.maxOrNull() ?: -1f
+        val zero = hitTops.count { it > t0 }
+        val k = Math.ceil(0.8 * invTotal).toInt().coerceAtLeast(1)
+        return if (hitTops.size >= k) {
+            val t = hitTops[k - 1]
+            Diagnosis(invTotal, zero, hitTops.count { it >= t }, wrongTops.count { it >= t })
+        } else Diagnosis(invTotal, zero, null, null)
     }
 
     internal data class Th(val accept: Float, val unc: Float, val prec: Float, val rec: Float, val urec: Float)

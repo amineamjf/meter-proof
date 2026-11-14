@@ -206,10 +206,16 @@ class InstructionListActivity : Activity() {
             is com.meterproof.app.delivery.WindowTrainer.Result.NotReady -> {
                 if (DeliveryStore(this).windowModel() == null) settings.deliveryDetection = false
                 val counts = "\nصور فيها مربع «فاتورة»: ${o.usedInvoiceImages}، صور «بلا فاتورة»: ${o.usedNoneImages}."
+                val diag = r.report?.diagnosis?.let { d ->
+                    "\n\nأفضل ما أمكن على صور التدريب نفسها: لو لم يُقبل أي خطأ لاكتُشفت ${d.hitsAtZeroWrong} من ${d.invoiceTotal} فاتورة." +
+                        (if (d.hitsAtRecall80 != null) " ولاكتشاف 80% منها (${d.hitsAtRecall80}) يُقبل خطأً ${d.wrongAtRecall80} صورة." else
+                            " ولا يبلغ 80% منها أصلًا.") +
+                        "\nافتح «قائمة المراجعة» في المعرض: الصور الخاطئة غالبًا فيها ورقة تشبه الفاتورة. صنّفها «ورقة مشابهة»، أو راجع إن كانت «بلا فاتورة» فعلًا، وأضف فواتير بمربعات متنوعة."
+                } ?: ""
                 AlertDialog.Builder(this)
                     .setTitle("النموذج الجديد غير جاهز (لم يتغير المستقر إن وُجد)")
                     .setMessage(
-                        r.reasons.joinToString("\n") { "• " + GalleryTraining.reasonArabic(it) } + counts + extra
+                        r.reasons.joinToString("\n") { "• " + GalleryTraining.reasonArabic(it) } + counts + diag + extra
                     )
                     .setPositiveButton("حسنًا", null)
                     .show()

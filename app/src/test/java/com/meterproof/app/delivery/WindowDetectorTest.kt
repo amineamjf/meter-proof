@@ -181,3 +181,28 @@ class AugmentedTrainingTest {
         assertTrue(rep == null || rep.invoiceImages == 12)
     }
 }
+
+class DiagnosisTest {
+    private fun ev(id: String, top: Float, hit: Boolean, inv: Boolean) =
+        WindowTrainer.ImageEval(id, top, hit, inv)
+
+    @Test fun reportsWhatIsAchievableWhenPrecisionFails() {
+        // 5 فواتير بدرجات 0.9..0.5، وصورتان بلا فاتورة إحداهما بدرجة 0.7
+        val evals = listOf(
+            ev("a", 0.9f, true, true), ev("b", 0.8f, true, true), ev("c", 0.7f, true, true),
+            ev("d", 0.6f, true, true), ev("e", 0.5f, true, true),
+            ev("n1", 0.7f, false, false), ev("n2", 0.2f, false, false)
+        )
+        val d = WindowTrainer.diagnose(evals)!!
+        assertEquals(5, d.invoiceTotal)
+        assertEquals(2, d.hitsAtZeroWrong)          // فقط 0.9 و0.8 فوق أعلى خطأ 0.7
+        assertEquals(4, d.hitsAtRecall80)           // 80% من 5 = 4 → عتبة 0.6
+        assertEquals(1, d.wrongAtRecall80)          // n1 بدرجة 0.7 قُبلت خطأً
+    }
+
+    @Test fun missedInvoiceCountsAsWrongAndNoInvoicesGivesNull() {
+        val evals = listOf(ev("a", 0.9f, true, true), ev("b", 0.95f, false, true))
+        assertEquals(0, WindowTrainer.diagnose(evals)!!.hitsAtZeroWrong)
+        assertNull(WindowTrainer.diagnose(listOf(ev("n", 0.4f, false, false))))
+    }
+}

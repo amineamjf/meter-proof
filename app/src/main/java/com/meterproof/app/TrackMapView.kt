@@ -75,6 +75,17 @@ class TrackMapView(context: Context, private val interactive: Boolean = false) :
     /** بلاطات فشل جلبها (دون اتصال أو خطأ): لا نعيد المحاولة قبل مرور RETRY_MS كي لا نطرق الشبكة باستمرار. */
     private val failedAt = HashMap<Long, Long>()
     private val tilePaint = Paint(Paint.FILTER_BITMAP_FLAG)
+
+    /** تحويل تلقائي بين مزوّدَي الخارطة العادية بعد إخفاقات متتالية (مرة واحدة لكل [refreshTiles]). */
+    private val failover = TileFailover()
+    private var switchedProvider = false
+
+    /** آخر مشكلة في جلب البلاطات للعرض فوق الخارطة (null = لا مشكلة). كانت الخلفية تبقى رمادية بصمت. */
+    @Volatile private var tileProblem: String? = null
+    private val problemPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#B71C1C")
+        textSize = 11f * density
+    }
     private val rect = RectF()
     private val srcRect = Rect()
     private val attrPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -163,6 +174,9 @@ class TrackMapView(context: Context, private val interactive: Boolean = false) :
     fun refreshTiles() {
         val st = Settings(context)
         tileTemplate = TileLayers.resolve(st.tileUrl, st.tileSat)
+        switchedProvider = false
+        failover.onSuccess()
+        tileProblem = null
         layerGen++
         cache.evictAll()
         pending.clear()
@@ -308,6 +322,8 @@ class TrackMapView(context: Context, private val interactive: Boolean = false) :
         try {
             executor()?.execute {
                 val k = TileLayers.key(template, z, x, y)
+                var fetchStatus = -1 // -1: لم يُجرَ اتصال (من المخزن أو دون إنترنت)
+                var fetchError: String? = null
                 var bytes: ByteArray? = try {
                     TileCache.get(app).get(k)
                 } catch (e: Exception) {
@@ -315,6 +331,8 @@ class TrackMapView(context: Context, private val interactive: Boolean = false) :
                 }
                 if (bytes == null && Net.online(app)) {
                     val r = HttpTileFetcher().fetch(TileLayers.build(template, z, x, y))
+                    fetchStatus = r.status
+                    fetchError = r.error
                     val b = r.bytes
                     if (r.status == 200 && b != null && ImageSniffer.isImage(b)) {
                         bytes = b
@@ -339,6 +357,7 @@ class TrackMapView(context: Context, private val interactive: Boolean = false) :
                 post {
                     pending.remove(key)
                     if (gen == layerGen) {
+                        if (fetchStatus >= 0 || bmp != null) onFetchOutcome(bmp != null, fetchStatus, fetchError)
                         if (bmp != null) {
                             cache.put(key, bmp)
                             invalidate()
@@ -351,6 +370,32 @@ class TrackMapView(context: Context, private val interactive: Boolean = false) :
         } catch (e: Exception) {
             pending.remove(key)
         }
+    }
+
+    /** يُستدعى على خيط الواجهة بعد كل جلب فعلي: يحدّث رسالة المشكلة ويحوّل للمزوّد البديل عند التكرار. */
+    private fun onFetchOutcome(ok: Boolean, status: Int, error: String?) {
+        if (ok) {
+            failover.onSuccess()
+            if (tileProblem != null) {
+                tileProblem = null
+                invalidate()
+            }
+            return
+        }
+        tileProblem = "تعذّر جلب الخارطة (" +
+            (if (status > 0) "HTTP $status" else (error ?: "خطأ شبكة")) + ")"
+        if (failover.onFailure() && !switchedProvider) {
+            val alt = TileLayers.fallbackFor(tileTemplate)
+            if (alt != null) {
+                switchedProvider = true
+                tileTemplate = alt
+                layerGen++
+                cache.evictAll()
+                pending.clear()
+                failedAt.clear()
+            }
+        }
+        invalidate()
     }
 
     private fun drawTiles(canvas: Canvas, w: Float, h: Float) {
@@ -417,6 +462,7 @@ class TrackMapView(context: Context, private val interactive: Boolean = false) :
         drawTiles(canvas, w, h)
         renderer.draw(canvas, w, h, track, photos, stops, selected, projector, meters)
         drawAttribution(canvas, w, h)
+        tileProblem?.let { canvas.drawText(it, 6f * density, h - 8f * density, problemPaint) }
     }
 
     /** يعيد ترتيب الصورة الأقرب للنقطة إن كانت ضمن مدى اللمس، وإلا -1. */

@@ -532,7 +532,8 @@ class MainActivity : Activity() {
     private fun confirmReportTiles(prep: ReportTiles.Prep, start: Long, end: Long) {
         val provider = when {
             TileLayers.isSatellite(prep.template) -> "Esri (قمر صناعي)"
-            prep.template.trim() == TileLayers.PLAN -> "CARTO (مخطط)"
+            prep.template.trim() == TileLayers.PLAN -> "Esri (مخطط)"
+            prep.template.trim() == TileLayers.PLAN_ALT -> "CARTO (مخطط)"
             else -> "مزوّد الرابط المخصص"
         }
         android.app.AlertDialog.Builder(this)

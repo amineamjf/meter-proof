@@ -42,7 +42,8 @@ class PhotoGalleryActivity : Activity() {
     private class Item(val id: String, val file: File, val flags: String)
 
     private enum class Filter(val title: String) {
-        ALL("الكل"), UNLABELED("بلا تصنيف"), INVOICE("فاتورة"), NONE("بلا فاتورة"), UNCLEAR("غير واضح")
+        ALL("الكل"), UNLABELED("بلا تصنيف"), INVOICE("فاتورة"), NONE("بلا فاتورة"), UNCLEAR("غير واضح"),
+        REVIEW("للمراجعة")
     }
 
     private lateinit var store: EvidenceStore
@@ -102,12 +103,20 @@ class PhotoGalleryActivity : Activity() {
         labelRow.addView(smallButton("فاتورة") { labelSelected(Label.INVOICE) }, weight())
         labelRow.addView(smallButton("بلا فاتورة") { labelSelected(Label.NONE) }, weight())
         labelRow.addView(smallButton("غير واضح") { labelSelected(Label.UNCLEAR) }, weight())
+        labelRow.addView(smallButton("ورقة مشابهة") { labelSelected(Label.SIMILAR) }, weight())
         labelRow.addView(smallButton("مسح") { labelSelected(null) }, weight())
         root.addView(labelRow)
 
         root.addView(smallButton("حذف المحدد", Ui.Kind.DANGER, Ui.Icon.TRASH) { confirmDelete(selected.toList()) })
 
-        root.addView(smallButton("تدرّب على الصور المصنَّفة وأرني النتيجة", Ui.Kind.PRIMARY, Ui.Icon.SPARKLE) {
+        root.addView(smallButton("تعليمات تدريب الفاتورة (مناطق: تعرّف / تجاهل)", Ui.Kind.TONAL, Ui.Icon.TAG) {
+            startActivity(android.content.Intent(this, InstructionListActivity::class.java))
+        })
+
+        root.addView(smallButton("درّب الكاشف (الأساس): مربعات + صور بلا فاتورة", Ui.Kind.PRIMARY, Ui.Icon.SPARKLE) {
+            startActivity(android.content.Intent(this, InstructionListActivity::class.java))
+        })
+        root.addView(smallButton("التقرير القديم على الصور المصنَّفة", Ui.Kind.GHOST, Ui.Icon.SPARKLE) {
             val c = PhotoLabels.counts(labels)
             if (c.invoice + c.none < 4) {
                 toast("صنّف بعض الصور أولًا (فاتورة / بلا فاتورة)")
@@ -236,6 +245,7 @@ class PhotoGalleryActivity : Activity() {
         Label.INVOICE -> Color.parseColor("#2E7D32")
         Label.NONE -> Color.parseColor("#C62828")
         Label.UNCLEAR -> Color.parseColor("#EF6C00")
+        Label.SIMILAR -> Color.parseColor("#6A1B9A")
     }
 
     // ---------------------------------------------------------------- البيانات
@@ -257,7 +267,12 @@ class PhotoGalleryActivity : Activity() {
     }
 
     private fun applyFilter() {
-        shown = all.filter {
+        if (filter == Filter.REVIEW) {
+            // ما قرّره الكاشف في الميدان ولم تصنّفه بعد: غير المؤكد أولًا
+            val order = com.meterproof.app.delivery.ReviewQueue.build(store.events(), labels)
+                .withIndex().associate { it.value.recordId to it.index }
+            shown = all.filter { it.id in order }.sortedBy { order[it.id] }
+        } else shown = all.filter {
             val l = labels[it.id]
             when (filter) {
                 Filter.ALL -> true
@@ -265,6 +280,7 @@ class PhotoGalleryActivity : Activity() {
                 Filter.INVOICE -> l == Label.INVOICE
                 Filter.NONE -> l == Label.NONE
                 Filter.UNCLEAR -> l == Label.UNCLEAR
+                Filter.REVIEW -> false
             }
         }
         for ((f, b) in filterButtons) b.isEnabled = f != filter
@@ -399,8 +415,29 @@ class PhotoGalleryActivity : Activity() {
         row.addView(smallButton("فاتورة") { setLabel(Label.INVOICE) }, weight())
         row.addView(smallButton("بلا فاتورة") { setLabel(Label.NONE) }, weight())
         row.addView(smallButton("غير واضح") { setLabel(Label.UNCLEAR) }, weight())
+        row.addView(smallButton("ورقة مشابهة") { setLabel(Label.SIMILAR) }, weight())
         row.addView(smallButton("مسح") { setLabel(null) }, weight())
         col.addView(row)
+        col.addView(smallButton("علّم المناطق (تدريب الفاتورة)", Ui.Kind.TONAL, Ui.Icon.TAG) {
+            if (PhotoLabels.usableForTraining(item.flags)) {
+                startActivity(
+                    android.content.Intent(this, InstructionEditorActivity::class.java)
+                        .putExtra(InstructionEditorActivity.EXTRA_PHOTO, item.id)
+                )
+            } else {
+                toast("هذه الصورة مجرَّدة أو مخفية الأوجه، فلا تصلح للتعليم")
+            }
+        })
+        col.addView(smallButton("علّم صندوق العداد / الباب", Ui.Kind.TONAL, Ui.Icon.TAG) {
+            if (PhotoLabels.usableForTraining(item.flags)) {
+                startActivity(
+                    android.content.Intent(this, EvidenceBoxActivity::class.java)
+                        .putExtra(EvidenceBoxActivity.EXTRA_PHOTO, item.id)
+                )
+            } else {
+                toast("هذه الصورة مجرَّدة أو مخفية الأوجه، فلا تصلح للتعليم")
+            }
+        })
         col.addView(smallButton("حذف هذه الصورة", Ui.Kind.DANGER, Ui.Icon.TRASH) { confirmDelete(listOf(item.id)) { dialog.dismiss() } })
         col.addView(smallButton("إغلاق", Ui.Kind.GHOST, Ui.Icon.CLOSE) { dialog.dismiss() })
         dialog.setContentView(col)

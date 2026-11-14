@@ -46,7 +46,9 @@ object GalleryTraining {
         val noPaper: Boolean,
         val verdict: Verdict,
         /** ما رآه الكاشف: إطار الورقة المكتشفة، يُرسم على الصورة. null إن لم تُوجد ورقة. */
-        val region: Region? = null
+        val region: Region? = null,
+        /** سبب الدرجة بالسمات (من النموذج النهائي)، أو null إن لم يوجد نموذج جاهز أو ورقة. */
+        val why: String? = null
     )
 
     class Report(
@@ -93,7 +95,8 @@ object GalleryTraining {
                 score >= uncertain -> Verdict.UNCERTAIN
                 else -> if (invoice) Verdict.MISSED else Verdict.CORRECT
             }
-            PhotoOutcome(e.id, e.label, score, noPaper, verdict, e.region)
+            val why = if (model != null && e.features != null) DecisionExplainer.explain(e.features, model) else null
+            PhotoOutcome(e.id, e.label, score, noPaper, verdict, e.region, why)
         }
 
         return Report(
@@ -113,6 +116,23 @@ object GalleryTraining {
         "NEED_MORE_NEGATIVES" -> "عدد صور «بلا فاتورة» التي وُجدت فيها ورقة غير كافٍ"
         "LOW_PRECISION" -> "الدقة دون الهدف (القبول الخاطئ كثير)"
         "LOW_RECALL" -> "يفوّت كثيرًا من الفواتير الحقيقية"
+        "NEED_MORE_INVOICE_IMAGES" -> "صور فيها مربع «فاتورة» غير كافية (يلزم 8 على الأقل)"
+        "NEED_MORE_NONE_IMAGES" -> "صور مصنَّفة «بلا فاتورة» غير كافية (يلزم 8 على الأقل)"
+        "HOLDOUT_FALSE_ACCEPT" -> "قَبِل أماكن بلا فاتورة في الصور المحجوزة (أضف صور «بلا فاتورة» أكثر وبتنوع)"
+        "TRAIN_FAILED" -> "تعذّر التدريب على هذه الأمثلة"
+        else -> code
+    }
+}
+
+/** نصوص عربية لأسباب قرار سجل الإصدارات. */
+object ModelLabels {
+    fun reasonArabic(code: String): String = when (code) {
+        "PRECISION_REGRESSED" -> "تراجعت دقته عن المستقر"
+        "RECALL_REGRESSED" -> "تراجع استدعاؤه عن المستقر"
+        "HOLDOUT_FALSE_ACCEPT_WORSE" -> "قبل أماكن بلا فاتورة أكثر في القياس المحجوز"
+        "FIRST_MODEL" -> "أول نموذج"
+        "NOT_WORSE" -> "لم يتراجع عن المستقر"
+        "IMPORTED" -> "مستورد من نسخة سابقة"
         else -> code
     }
 }

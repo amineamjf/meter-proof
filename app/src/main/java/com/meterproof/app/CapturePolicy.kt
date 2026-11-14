@@ -37,6 +37,48 @@ object CapturePolicy {
         return if (hasArrival) StopAction.ARRIVAL else StopAction.STOP
     }
 
+    /** بعد هذه المدة من التوقف تُعدّ الوقفة «طويلة» فلا تُلتقط صور عشوائية أثناءها. */
+    const val PROLONGED_STOP_MS = 120_000L
+
+    /**
+     * هل تُتخطّى الصورة العشوائية المجدولة؟ نعم أثناء توقف حالي إذا (أ) التُقطت له صورة وصول/توقف أصلًا،
+     * أو (ب) طال التوقف عن [PROLONGED_STOP_MS]. أثناء الحركة أو في أول التوقف بلا صورة: لا تخطّي.
+     * الصورة التلقائية عند الوصول (decideStop) لا تتأثر بهذا.
+     */
+    fun skipRandomDuringStop(
+        stopped: Boolean,
+        stopSinceMs: Long,
+        lastStopPhotoAtMs: Long,
+        nowMs: Long
+    ): Boolean {
+        if (!stopped || stopSinceMs <= 0L) return false
+        if (lastStopPhotoAtMs >= stopSinceMs) return true
+        return nowMs - stopSinceMs >= PROLONGED_STOP_MS
+    }
+
+    /** مهلة المحاولة الثانية بعد صورة الوصول/التوقف، ونافذتها من بداية التوقف. */
+    const val RETRY_DELAY_MS = 12_000L
+    const val RETRY_WINDOW_MS = 60_000L
+
+    /**
+     * محاولة ثانية واحدة فقط لكل توقف: إن كان الكاشف يعمل ولم يجد فاتورة مقبولة في صورة الوصول
+     * (ربما لم يضعها العامل بعد) والعامل ما زال واقفًا ضمن [RETRY_WINDOW_MS] من بداية التوقف.
+     * بلا كاشف فعّال (نموذج غير جاهز أو وضع خصوصية لا يدعمه) لا إعادة أبدًا، ولا ثالثة.
+     */
+    fun shouldRetryStopPhoto(
+        mode: String,
+        hadProbe: Boolean,
+        detected: Boolean,
+        stillStopped: Boolean,
+        alreadyRetried: Boolean,
+        nowMs: Long,
+        stopSinceMs: Long
+    ): Boolean {
+        if (mode != "arrival" && mode != "stop") return false
+        if (!hadProbe || detected || !stillStopped || alreadyRetried) return false
+        return stopSinceMs > 0L && nowMs - stopSinceMs <= RETRY_WINDOW_MS
+    }
+
     /** رموز ثابتة فقط (لا نصوص حرة): تُحفظ في تفاصيل الحدث المبصوم. */
     object Reason {
         const val NO_CAMERA_PERMISSION = "NO_CAMERA_PERMISSION"

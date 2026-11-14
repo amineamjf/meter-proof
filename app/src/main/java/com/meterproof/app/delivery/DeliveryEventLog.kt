@@ -21,6 +21,21 @@ object DeliveryEventLog {
     const val FLAG_DELIVERY = "DELIVERY"
     const val FLAG_OUTLINE = "DELIVERY_OUTLINE"
 
+    /**
+     * حالة الدليل بحسب الوثيقة. تُسجَّل مع الحدث (ev=)، و[NO_USABLE_EVIDENCE] لا يُكتب أبدًا في السجل
+     * (غياب الكشف ليس دليلًا على عدم التسليم)، بل تحسبه التقارير حين لا يوجد حدث لنقطة ما.
+     * وجود فاتورة في الصورة ليس إثباتًا لتسليمها: ACCEPTED تعني «قرينة مقبولة» لا «تسليمًا مثبتًا».
+     */
+    enum class EvidenceStatus { EVIDENCE_ACCEPTED, EVIDENCE_UNCERTAIN, NO_USABLE_EVIDENCE, PRIVACY_REJECTED }
+
+    fun evidenceStatus(tier: PrivacyTier?, state: DeliveryState, privacyRejected: Boolean = false): EvidenceStatus = when {
+        privacyRejected -> EvidenceStatus.PRIVACY_REJECTED
+        tier == PrivacyTier.REVEAL && state == DeliveryState.DETECTED -> EvidenceStatus.EVIDENCE_ACCEPTED
+        tier == PrivacyTier.ABSTRACT &&
+            (state == DeliveryState.DETECTED || state == DeliveryState.UNCERTAIN) -> EvidenceStatus.EVIDENCE_UNCERTAIN
+        else -> EvidenceStatus.NO_USABLE_EVIDENCE
+    }
+
     private val ID_PATTERN = Regex("^[0-9a-fA-F-]{8,40}$")
 
     /** نوع الحدث، أو null إن لم يكن هناك ما يُسجَّل. */
@@ -38,7 +53,8 @@ object DeliveryEventLog {
     }
 
     fun detail(
-        mode: String, score: Float, modelId: String, level: InvoiceDetail, recordId: String?
+        mode: String, score: Float, modelId: String, level: InvoiceDetail, recordId: String?,
+        status: EvidenceStatus? = null
     ): String {
         val pct = (score * 100f).roundToInt().coerceIn(0, 100)
         val sb = StringBuilder()
@@ -47,6 +63,7 @@ object DeliveryEventLog {
         sb.append(";cal=").append(clean(modelId))
         sb.append(";detail=").append(level.name)
         if (recordId != null && ID_PATTERN.matches(recordId)) sb.append(";rec=").append(recordId)
+        if (status != null) sb.append(";ev=").append(status.name)
         sb.append(";gate=").append(GateEventLog.GATE_VERSION)
         return sb.toString()
     }

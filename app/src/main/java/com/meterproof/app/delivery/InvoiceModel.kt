@@ -57,6 +57,23 @@ class InvoiceModel(
     val id: String by lazy { ModelCodec.fingerprint(this) }
 }
 
+/**
+ * نتيجة القياس على أمثلة محجوزة. trainable=false: لم يبلغ نموذج الجزء المتبقي الهدف أصلًا.
+ * falseAccepts هو الرقم الأهم: «بلا فاتورة» قبلها الكاشف (دليل تسليم وهمي).
+ */
+data class HoldoutReport(
+    val trainable: Boolean,
+    val heldPositives: Int,
+    val heldNegatives: Int,
+    val truePositives: Int,
+    val falseAccepts: Int,
+    val trainedOn: Int
+) {
+    val precision: Float
+        get() = if (truePositives + falseAccepts == 0) 0f else truePositives.toFloat() / (truePositives + falseAccepts)
+    val recall: Float get() = if (heldPositives == 0) 0f else truePositives.toFloat() / heldPositives
+}
+
 /** تدريب ومعايرة على الجهاز: انحدار لوجستي بتحقق متقاطع حتمي، بلا إنترنت وبلا صور. */
 object InvoiceTrainer {
 
@@ -225,6 +242,31 @@ object InvoiceTrainer {
         for (i in 0 until n) out[order[i]] = oof[i]
         return out
     }
+
+    /**
+     * قياس صادق على أمثلة محجوزة: كل عينة رابعة من كل فئة (بترتيب الزمن) تُعزل ولا يراها التدريب
+     * ولا اختيار العتبات، ثم يُقاس النموذج المدرَّب على الباقي عليها وحدها.
+     * التحقق المتقاطع في [train] يختار العتبة على التنبؤات نفسها التي يقيس بها، فيميل للتفاؤل قليلًا؛
+     * هذا القياس لا يعاني من ذلك. يُعيد null إن قلّت العينات (يلزم minPositives+محجوز من كل فئة).
+     */
+    fun holdoutEvaluate(samples: List<Sample>, now: Long, cfg: Config = Config()): HoldoutReport? {
+        val pos = samples.filter { it.positive }.sortedBy { it.t }
+        val neg = samples.filter { !it.positive }.sortedBy { it.t }
+        fun split(l: List<Sample>) = l.withIndex().partition { (i, _) -> i % HOLDOUT_EVERY == HOLDOUT_EVERY - 1 }
+        val (posHold, posTrain) = split(pos)
+        val (negHold, negTrain) = split(neg)
+        if (posHold.isEmpty() || negHold.isEmpty()) return null
+        val trainSet = (posTrain + negTrain).map { it.value }
+        val r = train(trainSet, now, cfg)
+        val model = (r as? Result.Ready)?.model
+            ?: return HoldoutReport(false, posHold.size, negHold.size, 0, 0, trainSet.size)
+        val accept = model.acceptThreshold
+        val tp = posHold.count { model.score(it.value.features) >= accept }
+        val fp = negHold.count { model.score(it.value.features) >= accept }
+        return HoldoutReport(true, posHold.size, negHold.size, tp, fp, trainSet.size)
+    }
+
+    const val HOLDOUT_EVERY = 4
 
     private fun dot(w: DoubleArray, x: DoubleArray): Double {
         var s = 0.0

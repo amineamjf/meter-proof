@@ -33,6 +33,8 @@ import com.meterproof.app.delivery.CalibrationProbe
 import com.meterproof.app.delivery.DeliveryDetector
 import com.meterproof.app.delivery.DeliveryEventLog
 import com.meterproof.app.delivery.DeliveryRevealProbe
+import com.meterproof.app.delivery.InstructionStores
+import com.meterproof.app.delivery.PlacementPrior
 import com.meterproof.app.delivery.DeliveryStore
 import com.meterproof.app.delivery.Sample
 import com.meterproof.app.privacy.GateEventLog
@@ -69,6 +71,8 @@ class CaptureService : LifecycleService() {
         private const val EXTRA_MOCK = "mock"
 
         private const val RETRY_WHILE_WALKING_MS = 15_000L
+        /** أقل زمن بعد فتح الكاميرا قبل الالتقاط (تعريض أولي)، حتى لو انتهى التركيز أسرع. */
+        private const val MIN_CAMERA_WARMUP_MS = 550L
         private const val CHANNEL_ID = "meterproof_session"
         private const val NOTIF_ID = 1001
 
@@ -140,8 +144,16 @@ class CaptureService : LifecycleService() {
     @Volatile private var discardDetail: String? = null
 
     /** نتيجة كشف التسليم للصورة الحالية، تُسجَّل حدثًا بعد حفظ السجل (null إن لا شيء). */
-    private class PendingDelivery(val eventType: String, val score: Float, val modelId: String, val detail: InvoiceDetail)
+    private class PendingDelivery(
+        val eventType: String, val score: Float, val modelId: String, val detail: InvoiceDetail,
+        val status: DeliveryEventLog.EvidenceStatus
+    )
     @Volatile private var pendingDelivery: PendingDelivery? = null
+    /** للمحاولة الثانية: هل عمل الكاشف في هذه اللقطة، وهل وجد فاتورة مقبولة؟ */
+    @Volatile private var captureHadProbe = false
+    @Volatile private var lastCaptureDetected = false
+    /** بداية التوقف الذي استُنفدت فيه المحاولة الثانية (محاولة واحدة لكل توقف). */
+    private var retryUsedForStopSince = 0L
 
     /** تصنيف عينة المعايرة الجارية (true = فاتورة ظاهرة). */
     @Volatile private var calibPositive = false
@@ -294,6 +306,7 @@ class CaptureService : LifecycleService() {
                     location.accuracy, if (location.hasSpeed()) location.speed else null
                 )
             )
+            maybeProximityArrival(location)
         }
 
         @Deprecated("Deprecated in Java")
@@ -302,6 +315,46 @@ class CaptureService : LifecycleService() {
         override fun onProviderEnabled(provider: String) {}
 
         override fun onProviderDisabled(provider: String) {}
+    }
+
+    private var lastProximityCheckAt = 0L
+    private var lastProximityCaptureAt = 0L
+    private val proximityAttempts = HashMap<Long, Long>()
+
+    /**
+     * صورة وصول فور دخول نطاق عداد لم يُوثَّق وصوله (دون انتظار توقف 30 ثانية)، إن لم يكن العامل ماشيًا ولا مسرعًا.
+     * لا تغيّر مسار التوقف: صورة التوقف تبقى كما هي، وهذا يضيف الالتقاط المبكر فقط.
+     */
+    private fun maybeProximityArrival(location: Location) {
+        if (!settings.active || settings.paused || capturing) return
+        val speed = if (location.hasSpeed()) location.speed else null
+        if (!ArrivalTrigger.motionOk(walking, speed)) return
+        val now = System.currentTimeMillis()
+        if (now - lastProximityCheckAt < ArrivalTrigger.CHECK_EVERY_MS) return
+        lastProximityCheckAt = now
+        val fix = MotionTracker.Fix(now, location.latitude, location.longitude, location.accuracy, speed)
+        executor.execute {
+            val found: Arrival? = try {
+                findArrival(fix)
+            } catch (e: Exception) {
+                null
+            }
+            if (found == null) return@execute
+            val arrival: Arrival = found
+            mainHandler.post {
+                val t = System.currentTimeMillis()
+                if (capturing || !settings.active || settings.paused || walking) return@post
+                val id = arrival.meter.id
+                if (!ArrivalTrigger.shouldFire(t, proximityAttempts[id] ?: 0L, lastProximityCaptureAt)) return@post
+                proximityAttempts[id] = t
+                lastProximityCaptureAt = t
+                lastStopPhotoAt = t // يمنع صورة توقف مزدوجة فورية
+                captureMeterId = id
+                captureLocation = lastLocation
+                captureExtraFlags = if (arrival.ambiguous) setOf("MULTI_NEAR") else emptySet()
+                capture("arrival")
+            }
+        }
     }
 
     override fun onCreate() {
@@ -509,6 +562,15 @@ class CaptureService : LifecycleService() {
                 .setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, alarmIntent())
             return
         }
+        if (CapturePolicy.skipRandomDuringStop(
+                settings.motionState == "stopped", settings.stopSince, lastStopPhotoAt,
+                System.currentTimeMillis()
+            )
+        ) {
+            // وقفة طويلة أو صُوّر وصولها: لا صورة عشوائية، نؤجّل للموعد العادي التالي
+            scheduleNext()
+            return
+        }
         capture("auto")
     }
 
@@ -549,9 +611,33 @@ class CaptureService : LifecycleService() {
                     .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
                     .build()
                 cp.unbindAll()
-                cp.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, imageCapture)
-                // انتظار قصير حتى يثبت التعريض والتركيز بعد فتح الكاميرا الباردة
-                mainHandler.postDelayed({ takePicture(imageCapture, mode) }, 1200L)
+                val camera = cp.bindToLifecycle(this, CameraSelector.DEFAULT_BACK_CAMERA, imageCapture)
+                // نلتقط حين يستقر التركيز والتعريض (غالبًا أقل من ثانية)، وبحد أقصى 1.2 ثانية كما كان سابقًا:
+                // لا أبطأ من الطريقة القديمة أبدًا، وأسرع حين تستجيب الكاميرا بسرعة.
+                val bindAt = SystemClock.elapsedRealtime()
+                val fired = java.util.concurrent.atomic.AtomicBoolean(false)
+                val go = { if (fired.compareAndSet(false, true)) takePicture(imageCapture, mode) }
+                mainHandler.postDelayed({ go() }, 1200L)
+                mainHandler.postDelayed({
+                    if (fired.get()) return@postDelayed
+                    try {
+                        val point = androidx.camera.core.SurfaceOrientedMeteringPointFactory(1f, 1f)
+                            .createPoint(0.5f, 0.5f)
+                        val action = androidx.camera.core.FocusMeteringAction.Builder(
+                            point,
+                            androidx.camera.core.FocusMeteringAction.FLAG_AF or
+                                androidx.camera.core.FocusMeteringAction.FLAG_AE or
+                                androidx.camera.core.FocusMeteringAction.FLAG_AWB
+                        ).build()
+                        val result = camera.cameraControl.startFocusAndMetering(action)
+                        result.addListener({
+                            val wait = (MIN_CAMERA_WARMUP_MS - (SystemClock.elapsedRealtime() - bindAt)).coerceAtLeast(0L)
+                            mainHandler.postDelayed({ go() }, wait)
+                        }, ContextCompat.getMainExecutor(this))
+                    } catch (e: Exception) {
+                        // المؤقت الاحتياطي (1.2 ثانية) يلتقط
+                    }
+                }, 300L)
             } catch (e: Exception) {
                 settings.lastError = "فشل فتح الكاميرا: ${e.javaClass.simpleName}"
                 logFailure(mode, CapturePolicy.Reason.CAMERA_OPEN_FAILED)
@@ -681,6 +767,7 @@ class CaptureService : LifecycleService() {
             return null
         }
         captureExtraFlags = captureExtraFlags + GateEventLog.flag(gate.decision.tier)
+        captureHadProbe = probe != null
         if (probe != null) noteDelivery(gate.decision.tier, probe)
         return jpeg
     }
@@ -688,29 +775,60 @@ class CaptureService : LifecycleService() {
     /** كاشف الفواتير لهذا الالتقاط، أو null إن كان معطّلًا أو لا نموذج معايَر (فلا كشف إطلاقًا). */
     private fun buildDeliveryProbe(): DeliveryRevealProbe? {
         if (!settings.deliveryDetection) return null
-        val model = try {
-            DeliveryStore(this).model()
+        val store = DeliveryStore(this)
+        val windowModel = try {
+            store.windowModel()
         } catch (e: Exception) {
             null
         }
-        if (model == null) return null
+        val legacy = if (windowModel == null) {
+            try {
+                store.model()
+            } catch (e: Exception) {
+                null
+            }
+        } else null
+        if (windowModel == null && legacy == null) return null
         val detail = if (settings.deliveryOutlineOnly) InvoiceDetail.OUTLINE_ONLY else InvoiceDetail.FULL
-        return DeliveryRevealProbe(DeliveryDetector(model), detail)
+        val prior = try {
+            InstructionStores.forTask(this).prior()
+        } catch (e: Exception) {
+            PlacementPrior.NONE
+        }
+        // الكاشف المتعلَّم بالنوافذ هو الأساس؛ القديم احتياط فقط ما دام لا نموذج جديد
+        return if (windowModel != null) {
+            val verifier = try {
+                store.verifier()
+            } catch (e: Exception) {
+                null
+            }
+            DeliveryRevealProbe(
+                com.meterproof.app.delivery.WindowDetector(
+                    windowModel, prior, verifier, if (verifier != null) SemanticLabeler else null
+                ),
+                detail
+            )
+        } else {
+            DeliveryRevealProbe(DeliveryDetector(legacy!!, prior = prior), detail)
+        }
     }
 
     /** يحدد علامات السجل المبصوم والحدث المؤجَّل بحسب قرار البوابة ونتيجة الكاشف. */
     private fun noteDelivery(tier: PrivacyTier, probe: DeliveryRevealProbe) {
         val r = probe.last ?: return
         val type = DeliveryEventLog.eventType(tier, r.state) ?: return
+        lastCaptureDetected = type == DeliveryEventLog.EVENT_DETECTED
         captureExtraFlags = captureExtraFlags + DeliveryEventLog.flags(tier, probe.detail)
-        pendingDelivery = PendingDelivery(type, r.score, r.modelId, probe.detail)
+        pendingDelivery = PendingDelivery(
+            type, r.score, r.modelId, probe.detail, DeliveryEventLog.evidenceStatus(tier, r.state)
+        )
     }
 
     /** يكتب حدث الكشف في سلسلة الأحداث بعد حفظ سجل الصورة، مع معرّف السجل. */
     private fun logDelivery(recordId: String, mode: String, loc: Location?) {
         val pd = pendingDelivery ?: return
         pendingDelivery = null
-        val detail = DeliveryEventLog.detail(mode, pd.score, pd.modelId, pd.detail, recordId)
+        val detail = DeliveryEventLog.detail(mode, pd.score, pd.modelId, pd.detail, recordId, pd.status)
         val now = System.currentTimeMillis()
         executor.execute {
             try {
@@ -805,6 +923,29 @@ class CaptureService : LifecycleService() {
     }
 
     private fun finishCapture(mode: String) {
+        val now = System.currentTimeMillis()
+        val since = settings.stopSince
+        val retry = settings.active && CapturePolicy.shouldRetryStopPhoto(
+            mode, captureHadProbe, lastCaptureDetected, settings.motionState == "stopped",
+            retryUsedForStopSince == since, now, since
+        )
+        val retryMeter = captureMeterId
+        captureHadProbe = false
+        lastCaptureDetected = false
+        if (retry) {
+            retryUsedForStopSince = since
+            mainHandler.postDelayed({
+                // ما زال الوقوف نفسه ولم تبدأ لقطة أخرى، وإلا فلا إعادة
+                if (settings.active && !capturing && settings.motionState == "stopped" &&
+                    settings.stopSince == since
+                ) {
+                    captureMeterId = retryMeter
+                    captureLocation = lastLocation
+                    captureExtraFlags = setOf("RETRY")
+                    capture(mode)
+                }
+            }, CapturePolicy.RETRY_DELAY_MS)
+        }
         capturing = false
         captureMeterId = -1L
         captureLocation = null

@@ -15,7 +15,13 @@ import kotlin.math.min
  * بلا [Projector] يلائم الرسم نفسه تلقائيًا ويملأ الخلفية (سلوك PDF والاحتياط).
  * ومع Projector (الخارطة بالبلاطات) يستعمل إسقاطه ولا يلمس الخلفية، فالبلاطات مرسومة تحته.
  */
-class MapRenderer(private val density: Float) {
+class MapRenderer(private val density: Float, private val compact: Boolean = false) {
+
+    /**
+     * compact: نقاط صغيرة بلا أرقام لتقرير PDF فوق صور القمر الصناعي، كي لا تغطي المنازل.
+     * الشاشة التفاعلية تبقى بالأحجام الكبيرة القابلة للمس (compact=false).
+     */
+    private val mark = if (compact) 0.34f else 1f
 
     /** إسقاط خارجي: يحوّل الإحداثيات إلى بكسل الشاشة ويعطي المتر لكل بكسل. */
     interface Projector {
@@ -30,7 +36,7 @@ class MapRenderer(private val density: Float) {
     private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#1565C0")
         style = Paint.Style.STROKE
-        strokeWidth = dp(3f)
+        strokeWidth = dp(if (compact) 1.6f else 3f)
         strokeJoin = Paint.Join.ROUND
         strokeCap = Paint.Cap.ROUND
     }
@@ -59,7 +65,7 @@ class MapRenderer(private val density: Float) {
 
     private val meterStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = dp(1.5f)
+        strokeWidth = dp(if (compact) 0.7f else 1.5f)
         color = Color.WHITE
     }
     private val legendPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -167,7 +173,7 @@ class MapRenderer(private val density: Float) {
                 val pending = m.state == MeterMarkState.PENDING
                 if (pending != (pass == 0)) continue
                 dotPaint.color = meterColor(m.state)
-                val r = if (pending) dp(5f) else dp(7f)
+                val r = maxOf(dp(if (pending) 5f else 7f) * mark, dp(1.8f))
                 canvas.drawCircle(meterX[i], meterY[i], r, dotPaint)
                 canvas.drawCircle(meterX[i], meterY[i], r, meterStroke)
             }
@@ -182,10 +188,10 @@ class MapRenderer(private val density: Float) {
         }
         if (track.isNotEmpty()) {
             dotPaint.color = Color.parseColor("#2E7D32") // بداية
-            canvas.drawCircle(px(track.first().lon), py(track.first().lat), dp(6f), dotPaint)
+            canvas.drawCircle(px(track.first().lon), py(track.first().lat), dp(6f) * maxOf(mark, 0.5f), dotPaint)
             if (track.size > 1) {
                 dotPaint.color = Color.parseColor("#0D47A1") // آخر نقطة
-                canvas.drawCircle(px(track.last().lon), py(track.last().lat), dp(6f), dotPaint)
+                canvas.drawCircle(px(track.last().lon), py(track.last().lat), dp(6f) * maxOf(mark, 0.5f), dotPaint)
             }
         }
 
@@ -194,7 +200,8 @@ class MapRenderer(private val density: Float) {
         for (s in validStops) {
             val x = px(s.lon)
             val y = py(s.lat)
-            canvas.drawRect(x - dp(7f), y - dp(7f), x + dp(7f), y + dp(7f), dotPaint)
+            val hs = dp(7f) * maxOf(mark, 0.4f)
+            canvas.drawRect(x - hs, y - hs, x + hs, y + hs, dotPaint)
         }
 
         // الصور: دوائر حمراء مرقّمة
@@ -207,12 +214,20 @@ class MapRenderer(private val density: Float) {
             photoY[i] = y
             val isSel = p.index == selected
             dotPaint.color = if (isSel) Color.parseColor("#B71C1C") else Color.parseColor("#EF5350")
-            canvas.drawCircle(x, y, if (isSel) dp(13f) else dp(10f), dotPaint)
-            if (isSel) {
-                ringPaint.color = Color.BLACK
-                canvas.drawCircle(x, y, dp(13f), ringPaint)
+            val pr = if (isSel) dp(13f) else dp(10f)
+            if (compact) {
+                // نقطة صغيرة بإطار أبيض رفيع تُقرأ فوق الصورة الجوية دون إخفاء المنزل، بلا رقم
+                val cr = dp(if (isSel) 4.2f else 3.2f)
+                canvas.drawCircle(x, y, cr, dotPaint)
+                canvas.drawCircle(x, y, cr, meterStroke)
+            } else {
+                canvas.drawCircle(x, y, pr, dotPaint)
+                if (isSel) {
+                    ringPaint.color = Color.BLACK
+                    canvas.drawCircle(x, y, dp(13f), ringPaint)
+                }
+                canvas.drawText((p.index + 1).toString(), x, y + dp(4f), textPaint)
             }
-            canvas.drawText((p.index + 1).toString(), x, y + dp(4f), textPaint)
         }
 
         // شريط المقياس

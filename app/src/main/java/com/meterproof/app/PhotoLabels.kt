@@ -14,7 +14,9 @@ object PhotoLabels {
     enum class Label(val code: String, val arabic: String) {
         INVOICE("INVOICE", "فاتورة موضوعة"),
         NONE("NONE", "بلا فاتورة"),
-        UNCLEAR("UNCLEAR", "غير واضح");
+        UNCLEAR("UNCLEAR", "غير واضح"),
+        /** ورقة تشبه الفاتورة وليست فاتورة (إعلان، إيصال، ورقة على الباب): أصعب سلبية، تُستعمل كمثال سلبي. */
+        SIMILAR("SIMILAR", "ورقة مشابهة");
 
         companion object {
             fun fromCode(code: String): Label? = values().firstOrNull { it.code == code }
@@ -46,14 +48,15 @@ object PhotoLabels {
     }
 
     /** عدد العينات لكل تصنيف (ما فيه ما يكفي للتدريب؟). */
-    data class Counts(val invoice: Int, val none: Int, val unclear: Int) {
-        val total get() = invoice + none + unclear
+    data class Counts(val invoice: Int, val none: Int, val unclear: Int, val similar: Int = 0) {
+        val total get() = invoice + none + unclear + similar
     }
 
     fun counts(labels: Map<String, Label>): Counts = Counts(
         invoice = labels.values.count { it == Label.INVOICE },
         none = labels.values.count { it == Label.NONE },
-        unclear = labels.values.count { it == Label.UNCLEAR }
+        unclear = labels.values.count { it == Label.UNCLEAR },
+        similar = labels.values.count { it == Label.SIMILAR }
     )
 
     /** أقل عدد من كل نوع (فاتورة / بلا فاتورة) قبل أن يصلح التدريب؛ يطابق شاشة المعايرة الحالية. */

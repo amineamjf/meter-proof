@@ -95,6 +95,31 @@ class Settings(context: Context) {
         get() = sp.getBoolean("photoOnStop", true)
         set(v) = sp.edit().putBoolean("photoOnStop", v).apply()
 
+    /**
+     * وضع «المسار فقط»: بلا صور تلقائية ولا عشوائية ولا عند التوقف؛ مسار GPS ونقاط التوقف القصير فقط.
+     * (صورة «الآن» اليدوية وتصوير عداد من الجولة يبقيان بطلبك.) يسري من الجلسة التالية.
+     */
+    var trackOnly: Boolean
+        get() = sp.getBoolean("trackOnly", false)
+        set(v) = sp.edit().putBoolean("trackOnly", v).apply()
+
+    /** نقاط التوقف القصير تُسجَّل أيضًا مع التصوير (وفي وضع المسار فقط تعمل دائمًا). */
+    var stopPointsOn: Boolean
+        get() = sp.getBoolean("stopPointsOn", false)
+        set(v) = sp.edit().putBoolean("stopPointsOn", v).apply()
+
+    val stopPointsActive: Boolean get() = trackOnly || stopPointsOn
+
+    /** بعد كم ثانية من «توقف عن المشي» تُسجَّل نقطة التوقف القصير (1 إلى 5). */
+    var stopTriggerSeconds: Int
+        get() = sp.getInt("stopTrigger", 2).coerceIn(1, 5)
+        set(v) = sp.edit().putInt("stopTrigger", v.coerceIn(1, 5)).apply()
+
+    /** نصف قطر اعتبار نقطتي توقف نقطة واحدة (بالمتر). */
+    var stopPointRadiusM: Int
+        get() = sp.getInt("stopPointRadius", 25).coerceIn(10, 60)
+        set(v) = sp.edit().putInt("stopPointRadius", v.coerceIn(10, 60)).apply()
+
     /** الحي المختار في شاشة الجولة (فارغ = كل الأحياء) */
     var roundQuartier: String
         get() = sp.getString("roundQuartier", "") ?: ""

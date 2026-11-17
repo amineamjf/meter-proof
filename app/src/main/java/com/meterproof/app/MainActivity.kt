@@ -55,6 +55,9 @@ class MainActivity : Activity() {
     private lateinit var stopField: EditText
     private lateinit var photoOnStopButton: Button
     private lateinit var privacyModeButton: Button
+    private lateinit var trackOnlyButton: Button
+    private lateinit var stopPointsButton: Button
+    private lateinit var stopTriggerButton: Button
     private lateinit var dayLabel: TextView
     private lateinit var summaryView: TextView
     private lateinit var tileInfoView: TextView
@@ -227,6 +230,15 @@ class MainActivity : Activity() {
         col.addView(photoOnStopButton)
         privacyModeButton = button("") { togglePrivacyMode() }
         col.addView(privacyModeButton)
+        trackOnlyButton = button("") { settings.trackOnly = !settings.trackOnly; updatePhotoOnStopText() }
+        col.addView(trackOnlyButton)
+        stopPointsButton = button("") { settings.stopPointsOn = !settings.stopPointsOn; updatePhotoOnStopText() }
+        col.addView(stopPointsButton)
+        stopTriggerButton = button("") {
+            settings.stopTriggerSeconds = if (settings.stopTriggerSeconds >= 5) 1 else settings.stopTriggerSeconds + 1
+            updatePhotoOnStopText()
+        }
+        col.addView(stopTriggerButton)
         updatePhotoOnStopText()
         col.addView(button("حفظ الإعدادات", Ui.Kind.PRIMARY, Ui.Icon.CHECK) { saveSettings(true) })
 
@@ -559,6 +571,18 @@ class MainActivity : Activity() {
 
     private fun updatePhotoOnStopText() {
         updatePrivacyModeText()
+        trackOnlyButton.text = if (settings.trackOnly) {
+            "وضع «المسار فقط»: مفعّل — بلا صور تلقائية، مسار ونقاط توقف فقط (يسري من الجلسة التالية)"
+        } else {
+            "وضع «المسار فقط»: معطّل — اضغط لتفعيله (بلا صور تلقائية)"
+        }
+        stopPointsButton.text = if (settings.stopPointsActive) {
+            "نقاط التوقف القصير: " + (if (settings.trackOnly) "مفعّلة (ضمن المسار فقط)" else "مفعّلة (اضغط للتعطيل)")
+        } else {
+            "نقاط التوقف القصير: معطّلة — اضغط لتفعيلها مع التصوير"
+        }
+        stopTriggerButton.text =
+            "زمن «التوقف عن المشي» لتسجيل نقطة: ${settings.stopTriggerSeconds} ثانية (اضغط للتغيير 1–5؛ يسري من الجلسة التالية)"
         photoOnStopButton.text = if (settings.photoOnStop) {
             "صورة عند كل توقف (حتى بلا قاعدة بيانات): مفعّلة (اضغط للتعطيل)"
         } else {

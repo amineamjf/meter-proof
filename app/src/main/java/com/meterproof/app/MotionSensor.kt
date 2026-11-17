@@ -15,13 +15,15 @@ import android.os.Handler
 class MotionSensor(
     context: Context,
     private val handler: Handler,
+    private val stillHoldMs: Long = 1_000L,
+    private val stillThreshold: Double = 0.25,
     private val onChange: (Long, Boolean) -> Unit
 ) : SensorEventListener {
 
     private val manager: SensorManager? =
         context.applicationContext.getSystemService(SensorManager::class.java)
     private val accel: Sensor? = manager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
-    private var detector = MotionDetector()
+    private var detector = MotionDetector(stillThreshold = stillThreshold, stillHoldMs = stillHoldMs)
     private var running = false
 
     val available: Boolean get() = accel != null
@@ -29,7 +31,7 @@ class MotionSensor(
     fun start() {
         val s = accel ?: return
         if (running) return
-        detector = MotionDetector()
+        detector = MotionDetector(stillThreshold = stillThreshold, stillHoldMs = stillHoldMs)
         manager?.registerListener(this, s, SensorManager.SENSOR_DELAY_NORMAL, handler)
         running = true
     }

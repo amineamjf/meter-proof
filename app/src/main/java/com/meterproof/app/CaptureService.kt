@@ -206,7 +206,7 @@ class CaptureService : LifecycleService() {
                     // تجاهل
                 }
             }
-            if (settings.active && !settings.paused && inWorkHours()) {
+            if (settings.active && !settings.paused && inWorkHours() && !settings.trackOnly) {
                 // توقف قرب إحداثية عداد في الجولة: صورة وصول مربوطة بذلك العداد (لا تعني تسليم الفاتورة)
                 executor.execute {
                     val arrival = try {
@@ -266,6 +266,56 @@ class CaptureService : LifecycleService() {
         }
     }
 
+    // ---- نقاط التوقف القصير (وضع «المسار فقط» أو تفعيلها مع التصوير)
+    private var stopPoints = StopPointRecorder()
+
+    private fun newStopPointRecorder(): StopPointRecorder = StopPointRecorder(
+        StopPointRecorder.Config(dedupRadiusM = settings.stopPointRadiusM.toDouble())
+    ).also { r ->
+        r.load(try { StopPointLog.known(store.events()) } catch (e: Exception) { emptyList() })
+    }
+
+    /** يكتب قرارات مسجِّل النقاط أحداثًا جديدة في السجل المبصوم (على خيط الكتابة). */
+    private fun recordStopPoints(actions: List<StopPointRecorder.Action>) {
+        for (a in actions) {
+            when (a) {
+                is StopPointRecorder.Action.NewPoint -> executor.execute {
+                    try {
+                        store.addEvent(
+                            StopPointLog.EVENT_POINT, a.fix.t, a.fix.lat, a.fix.lon, a.fix.acc,
+                            StopPointLog.pointDetail(a.id, a.fix.acc)
+                        )
+                    } catch (e: Exception) {
+                        // نقطة واحدة لا تستحق إيقاف الخدمة
+                    }
+                }
+                is StopPointRecorder.Action.Refined -> executor.execute {
+                    try {
+                        store.addEvent(
+                            StopPointLog.EVENT_REFINED, System.currentTimeMillis(), a.lat, a.lon, a.acc,
+                            StopPointLog.refinedDetail(a.id, a.samples, a.spreadM, a.acc)
+                        )
+                    } catch (e: Exception) {
+                        // تجاهل
+                    }
+                }
+                is StopPointRecorder.Action.Visit -> {
+                    val k = stopPoints.points().firstOrNull { it.id == a.id } ?: continue
+                    executor.execute {
+                        try {
+                            store.addEvent(
+                                StopPointLog.EVENT_VISIT, a.t, k.lat, k.lon, k.accuracyM,
+                                StopPointLog.visitDetail(a.id, a.distanceM)
+                            )
+                        } catch (e: Exception) {
+                            // تجاهل
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private fun newTracker(): MotionTracker = MotionTracker(
         MotionTracker.Config(stopAfterMs = settings.stopAfterSeconds.coerceIn(10, 600) * 1000L),
         trackerSink
@@ -288,6 +338,7 @@ class CaptureService : LifecycleService() {
                 if (tracking) {
                     tracking = false
                     tracker.finish(System.currentTimeMillis())
+                    stopPoints.reset()
                     settings.motionState = "idle"
                     stopMotionSensor()
                     setGpsFast(false)
@@ -306,6 +357,15 @@ class CaptureService : LifecycleService() {
                     location.accuracy, if (location.hasSpeed()) location.speed else null
                 )
             )
+            if (settings.stopPointsActive) {
+                recordStopPoints(
+                    stopPoints.onFix(
+                        StopPointRecorder.Fix(
+                            System.currentTimeMillis(), location.latitude, location.longitude, location.accuracy
+                        )
+                    )
+                )
+            }
             maybeProximityArrival(location)
         }
 
@@ -326,7 +386,7 @@ class CaptureService : LifecycleService() {
      * لا تغيّر مسار التوقف: صورة التوقف تبقى كما هي، وهذا يضيف الالتقاط المبكر فقط.
      */
     private fun maybeProximityArrival(location: Location) {
-        if (!settings.active || settings.paused || capturing) return
+        if (!settings.active || settings.paused || capturing || settings.trackOnly) return
         val speed = if (location.hasSpeed()) location.speed else null
         if (!ArrivalTrigger.motionOk(walking, speed)) return
         val now = System.currentTimeMillis()
@@ -417,6 +477,9 @@ class CaptureService : LifecycleService() {
                 settings.active = true
                 settings.lastError = ""
                 tracker = newTracker()
+                stopPoints = newStopPointRecorder()
+                motionSensor?.stop()
+                motionSensor = null // يُنشأ من جديد بإعدادات هذه الجلسة
                 tracking = false
                 clockJumped = false
                 tamperLoggedAt.clear()
@@ -494,6 +557,10 @@ class CaptureService : LifecycleService() {
 
     /** يسحب الفاصل التالي عشوائيًا ضمن المجال ويضبط المنبّه (لا يتطلب إذنًا خاصًا) */
     private fun scheduleNext() {
+        if (settings.trackOnly) {
+            settings.nextCaptureAt = 0L
+            return
+        }
         val minM = settings.minMinutes.coerceAtLeast(1)
         val maxM = settings.maxMinutes.coerceAtLeast(minM)
         val delayMs = Random.nextLong(minM * 60_000L, maxM * 60_000L + 1)
@@ -550,6 +617,7 @@ class CaptureService : LifecycleService() {
         }
         if (endShiftIfOver()) return
         scheduleShiftEnd() // يلتقط أي تغيير في ساعة النهاية أثناء الجلسة
+        if (settings.trackOnly) return // وضع المسار فقط: لا صور عشوائية ولا موعد تالٍ
         if (settings.paused || !inWorkHours()) {
             scheduleNext()
             return
@@ -972,7 +1040,12 @@ class CaptureService : LifecycleService() {
             return
         }
         val lm = getSystemService(LocationManager::class.java)
-        val interval = if (gpsFast) 5_000L else 30_000L
+        // نقاط التوقف القصير تحتاج قراءة كل ثانيتين أثناء الحركة (بطارية أكثر، لذا في هذا الوضع فقط)
+        val interval = when {
+            !gpsFast -> 30_000L
+            settings.stopPointsActive -> 2_000L
+            else -> 5_000L
+        }
         try {
             for (p in listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)) {
                 if (!lm.isProviderEnabled(p)) continue
@@ -1018,9 +1091,18 @@ class CaptureService : LifecycleService() {
 
     private fun startMotionSensor() {
         if (motionSensor == null) {
-            motionSensor = MotionSensor(this, mainHandler) { t, moving ->
+            val sp = settings.stopPointsActive
+            motionSensor = MotionSensor(
+                this, mainHandler,
+                stillHoldMs = if (sp) settings.stopTriggerSeconds * 1_000L else 1_000L,
+                // «توقف عن المشي» لا «سكون تام»: الذراع تتحرك وهو يدفع الورقة (قيمة تقديرية تُضبط ميدانيًا)
+                stillThreshold = if (sp) 0.4 else 0.25
+            ) { t, moving ->
                 walking = moving
-                if (tracking) tracker.onMotion(t, moving)
+                if (tracking) {
+                    tracker.onMotion(t, moving)
+                    if (settings.stopPointsActive) recordStopPoints(stopPoints.onMotion(t, moving))
+                }
             }
         }
         motionSensor?.start()

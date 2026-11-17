@@ -164,7 +164,7 @@ class MapActivity : Activity() {
         shownEvents = events
         shownTotals = totals
         val meters = try {
-            roundDb.markers()
+            MeterPassLog.overlay(roundDb.markers(), store.events())
         } catch (e: Exception) {
             emptyList()
         }

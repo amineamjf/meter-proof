@@ -53,7 +53,7 @@ object Exporter {
 
             val stops = StopPointLog.mapStops(store.events())
             val allMeters = try {
-                RoundDb(context).markers()
+                MeterPassLog.overlay(RoundDb(context).markers(), store.events())
             } catch (e: Exception) {
                 emptyList()
             }
@@ -69,7 +69,7 @@ object Exporter {
                 val (s, e) = Days.range(0)
                 // من مخزن الجهاز فقط (لا شبكة في «تصدير الكل»)
                 val pdf = summaryPdfBytes(
-                    store, s, e, verification, visitedMeters(context, s, e), ReportTiles.source(context)
+                    store, s, e, verification, visitedMeters(context, store, s, e), ReportTiles.source(context)
                 )
                 write(context, dir, "summary_today.pdf", "application/pdf") { out -> out.write(pdf.bytes) }
             } catch (ex: Exception) {
@@ -91,7 +91,7 @@ object Exporter {
     ): ReportTiles.Prep? = try {
         val d = dayData(store, dayStartMs, dayEndMs)
         val plan = PdfReport.mapPlan(
-            d.track, d.photos, d.summary.stops + d.extraStops, visitedMeters(context, dayStartMs, dayEndMs)
+            d.track, d.photos, d.summary.stops + d.extraStops, visitedMeters(context, store, dayStartMs, dayEndMs)
         )
         if (plan.overview == null) null else ReportTiles.prepare(context, plan)
     } catch (e: Exception) {
@@ -107,7 +107,7 @@ object Exporter {
         fetchMissing: Boolean = false
     ): Result {
         return try {
-            val meters = visitedMeters(context, dayStartMs, dayEndMs)
+            val meters = visitedMeters(context, store, dayStartMs, dayEndMs)
             var fetchNote = ""
             if (fetchMissing && Net.online(context)) {
                 val prep = prepareSummaryMap(context, store, dayStartMs, dayEndMs)
@@ -143,8 +143,10 @@ object Exporter {
     }
 
     /** عدادات الجولة التي زيرت في هذا اليوم فقط (وصول أو تصوير)، كي لا تتضخم خارطة التقرير. */
-    private fun visitedMeters(context: Context, dayStartMs: Long, dayEndMs: Long): List<MeterPoint> = try {
-        RoundDb(context).markers().filter { it.visitedAt in dayStartMs until dayEndMs }
+    private fun visitedMeters(
+        context: Context, store: EvidenceStore, dayStartMs: Long, dayEndMs: Long
+    ): List<MeterPoint> = try {
+        MeterPassLog.overlay(RoundDb(context).markers(), store.events()).filter { it.visitedAt in dayStartMs until dayEndMs }
     } catch (e: Exception) {
         emptyList()
     }

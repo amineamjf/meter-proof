@@ -483,7 +483,7 @@ class MainActivity : Activity() {
             mapEventCount = eventCount
             mapTotals = totals
             val meters = try {
-                roundDb.markers()
+                MeterPassLog.overlay(roundDb.markers(), store.events())
             } catch (e: Exception) {
                 emptyList()
             }
@@ -854,7 +854,7 @@ class MainActivity : Activity() {
                 MapHtml.build(
                     store.trackPoints(), store.photoPoints(),
                     StopPointLog.mapStops(store.events()), withImages = false,
-                    meters = try { roundDb.markers() } catch (e: Exception) { emptyList() }
+                    meters = try { MeterPassLog.overlay(roundDb.markers(), store.events()) } catch (e: Exception) { emptyList() }
                 ),
                 Charsets.UTF_8
             )

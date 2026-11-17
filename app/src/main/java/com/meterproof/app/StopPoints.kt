@@ -71,6 +71,11 @@ class StopPointRecorder(
     /** النقاط المعروفة الآن (المحمَّلة والجديدة). */
     fun points(): List<StopPointLog.Known> = known.toList()
 
+    /** نقطة زيرت من مسار آخر (الاقتراب): لا «مرور» مكرر منها خلال فترة الانتظار. */
+    fun markVisited(id: String, t: Long) {
+        lastVisit[id] = t
+    }
+
     fun reset() {
         recent.clear()
         walkSince = null

@@ -269,6 +269,64 @@ class CaptureService : LifecycleService() {
     // ---- نقاط التوقف القصير (وضع «المسار فقط» أو تفعيلها مع التصوير)
     private var stopPoints = StopPointRecorder()
 
+    // ---- التعرّف على المرور بعدادات الجولة ونقاط التوقف المعروفة دون توقف (يعمل على خيط الكتابة فقط)
+    private val passTracker = PassTracker()
+    private val passMeters = HashMap<Long, MeterItem>()
+    private var lastPassCheckAt = 0L
+
+    private fun checkPasses(location: Location) {
+        val now = System.currentTimeMillis()
+        if (now - lastPassCheckAt < 1_500L) return
+        lastPassCheckAt = now
+        val fix = PassTracker.Fix(now, location.latitude, location.longitude, location.accuracy)
+        val pts = stopPoints.points() // لقطة من الخيط الرئيسي
+        val radiusSetting = settings.stopPointRadiusM.toDouble()
+        executor.execute {
+            try {
+                val targets = ArrayList<PassTracker.Target>()
+                val dLat = 60.0 / 111_320.0
+                val dLon = dLat / maxOf(0.2, Math.cos(Math.toRadians(fix.lat)))
+                val r = RoundLogic.arrivalRadiusM(fix.acc)
+                for (m in roundDb.nearby(fix.lat - dLat, fix.lat + dLat, fix.lon - dLon, fix.lon + dLon)) {
+                    val la = m.lat ?: continue
+                    val lo = m.lon ?: continue
+                    passMeters[m.id] = m
+                    targets.add(PassTracker.Target(MeterPassLog.key(m.id), la, lo, r))
+                }
+                for (k in pts) {
+                    if (Geo.distanceM(fix.lat, fix.lon, k.lat, k.lon) > 120.0) continue
+                    targets.add(PassTracker.Target("pt:" + k.id, k.lat, k.lon, maxOf(radiusSetting, fix.acc.toDouble())))
+                }
+                emitPasses(passTracker.onFix(fix, targets), pts)
+            } catch (e: Exception) {
+                // التعرّف بالمرور مساعد: خلله لا يوقف الخدمة
+            }
+        }
+    }
+
+    /** يكتب المرورات أحداثًا جديدة (على خيط الكتابة). */
+    private fun emitPasses(passes: List<PassTracker.Pass>, pts: List<StopPointLog.Known>) {
+        for (p in passes) {
+            if (p.key.startsWith("m:")) {
+                val id = p.key.substring(2).toLongOrNull() ?: continue
+                val m = passMeters[id] ?: continue
+                store.addEvent(
+                    MeterPassLog.EVENT, p.fix.t, p.fix.lat, p.fix.lon, p.fix.acc,
+                    MeterPassLog.detail(id, m.meterNo, p.distanceM, p.ambiguous)
+                )
+                passTracker.markPermanent(listOf(p.key))
+            } else if (p.key.startsWith("pt:")) {
+                val id = p.key.substring(3)
+                val k = pts.firstOrNull { it.id == id } ?: continue
+                store.addEvent(
+                    StopPointLog.EVENT_VISIT, p.fix.t, k.lat, k.lon, k.accuracyM,
+                    StopPointLog.visitDetail(id, p.distanceM)
+                )
+                mainHandler.post { stopPoints.markVisited(id, p.fix.t) }
+            }
+        }
+    }
+
     private fun newStopPointRecorder(): StopPointRecorder = StopPointRecorder(
         StopPointRecorder.Config(dedupRadiusM = settings.stopPointRadiusM.toDouble())
     ).also { r ->
@@ -280,6 +338,7 @@ class CaptureService : LifecycleService() {
         for (a in actions) {
             when (a) {
                 is StopPointRecorder.Action.NewPoint -> executor.execute {
+                    passTracker.markVisited("pt:" + a.id, a.fix.t) // لا «مرور» بنقطة سُجّلت للتو
                     try {
                         store.addEvent(
                             StopPointLog.EVENT_POINT, a.fix.t, a.fix.lat, a.fix.lon, a.fix.acc,
@@ -302,6 +361,7 @@ class CaptureService : LifecycleService() {
                 is StopPointRecorder.Action.Visit -> {
                     val k = stopPoints.points().firstOrNull { it.id == a.id } ?: continue
                     executor.execute {
+                        passTracker.markVisited("pt:" + a.id, a.t) // لا مرور مكرر بالاقتراب
                         try {
                             store.addEvent(
                                 StopPointLog.EVENT_VISIT, a.t, k.lat, k.lon, k.accuracyM,
@@ -338,7 +398,15 @@ class CaptureService : LifecycleService() {
                 if (tracking) {
                     tracking = false
                     tracker.finish(System.currentTimeMillis())
+                    val pointsSnapshot = stopPoints.points()
                     stopPoints.reset()
+                    executor.execute {
+                        try {
+                            emitPasses(passTracker.flush(), pointsSnapshot)
+                        } catch (e: Exception) {
+                            // تجاهل
+                        }
+                    }
                     settings.motionState = "idle"
                     stopMotionSensor()
                     setGpsFast(false)
@@ -365,6 +433,7 @@ class CaptureService : LifecycleService() {
                         )
                     )
                 )
+                checkPasses(location)
             }
             maybeProximityArrival(location)
         }
@@ -478,6 +547,18 @@ class CaptureService : LifecycleService() {
                 settings.lastError = ""
                 tracker = newTracker()
                 stopPoints = newStopPointRecorder()
+                executor.execute {
+                    passTracker.reset()
+                    passMeters.clear()
+                    // عدادات مرّ بها العامل سابقًا لا يُسجَّل مرور ثانٍ بها
+                    passTracker.markPermanent(
+                        try {
+                            MeterPassLog.passes(store.events()).keys.map { MeterPassLog.key(it) }
+                        } catch (e: Exception) {
+                            emptyList()
+                        }
+                    )
+                }
                 motionSensor?.stop()
                 motionSensor = null // يُنشأ من جديد بإعدادات هذه الجلسة
                 tracking = false

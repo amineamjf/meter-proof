@@ -168,7 +168,7 @@ class MapActivity : Activity() {
         } catch (e: Exception) {
             emptyList()
         }
-        map.setData(store.trackPoints(), store.photoPoints(), StopPairing.pair(store.events()), meters)
+        map.setData(store.trackPoints(), store.photoPoints(), StopPointLog.mapStops(store.events()), meters)
     }
 
     private fun showPhoto(index: Int) {

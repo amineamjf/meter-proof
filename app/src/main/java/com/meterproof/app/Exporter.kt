@@ -51,7 +51,7 @@ object Exporter {
                 out.write((verification + "\n").toByteArray(Charsets.UTF_8))
             }
 
-            val stops = StopPairing.pair(store.events())
+            val stops = StopPointLog.mapStops(store.events())
             val allMeters = try {
                 RoundDb(context).markers()
             } catch (e: Exception) {
@@ -91,7 +91,7 @@ object Exporter {
     ): ReportTiles.Prep? = try {
         val d = dayData(store, dayStartMs, dayEndMs)
         val plan = PdfReport.mapPlan(
-            d.track, d.photos, d.summary.stops, visitedMeters(context, dayStartMs, dayEndMs)
+            d.track, d.photos, d.summary.stops + d.extraStops, visitedMeters(context, dayStartMs, dayEndMs)
         )
         if (plan.overview == null) null else ReportTiles.prepare(context, plan)
     } catch (e: Exception) {
@@ -149,7 +149,10 @@ object Exporter {
         emptyList()
     }
 
-    private class DayData(val now: Long, val summary: DaySummary, val track: List<GeoPoint>, val photos: List<PhotoPoint>)
+    private class DayData(
+        val now: Long, val summary: DaySummary, val track: List<GeoPoint>, val photos: List<PhotoPoint>,
+        val extraStops: List<Stop>
+    )
 
     private fun dayData(store: EvidenceStore, dayStartMs: Long, dayEndMs: Long): DayData {
         val now = System.currentTimeMillis()
@@ -160,7 +163,8 @@ object Exporter {
             .filter { it.t in dayStartMs until dayEndMs }
             .map { GeoPoint(it.lat, it.lon) }
         val dayPhotos = store.photoPoints().filter { it.timeMillis in dayStartMs until dayEndMs }
-        return DayData(now, summary, dayTrack, dayPhotos)
+        val points = StopPointLog.asStops(store.events()).filter { it.startMs in dayStartMs until dayEndMs }
+        return DayData(now, summary, dayTrack, dayPhotos, points)
     }
 
     private class PdfBuild(val bytes: ByteArray, val map: ReportMapOutcome?)
@@ -176,7 +180,7 @@ object Exporter {
         val d = dayData(store, dayStartMs, dayEndMs)
         fun build(m: ReportMapSource?): PdfBuild {
             val bos = ByteArrayOutputStream()
-            val outcome = PdfReport.write(d.summary, d.now, d.track, d.photos, verification, bos, meters, m)
+            val outcome = PdfReport.write(d.summary, d.now, d.track, d.photos, verification, bos, meters, m, d.extraStops)
             return PdfBuild(bos.toByteArray(), if (m != null) outcome else null)
         }
         return try {

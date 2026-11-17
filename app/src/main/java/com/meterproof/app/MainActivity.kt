@@ -487,7 +487,7 @@ class MainActivity : Activity() {
             } catch (e: Exception) {
                 emptyList()
             }
-            mapView.setData(store.trackPoints(), store.photoPoints(), StopPairing.pair(store.events()), meters)
+            mapView.setData(store.trackPoints(), store.photoPoints(), StopPointLog.mapStops(store.events()), meters)
             mapView.setSelected(imageIndex)
             renderSummary()
         }
@@ -853,7 +853,7 @@ class MainActivity : Activity() {
             file.writeText(
                 MapHtml.build(
                     store.trackPoints(), store.photoPoints(),
-                    StopPairing.pair(store.events()), withImages = false,
+                    StopPointLog.mapStops(store.events()), withImages = false,
                     meters = try { roundDb.markers() } catch (e: Exception) { emptyList() }
                 ),
                 Charsets.UTF_8

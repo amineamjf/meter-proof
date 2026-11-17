@@ -52,11 +52,12 @@ object PdfReport {
         verification: String,
         out: OutputStream,
         meters: List<MeterPoint> = emptyList(),
-        map: ReportMapSource? = null
+        map: ReportMapSource? = null,
+        extraStops: List<Stop> = emptyList()
     ): ReportMapOutcome {
         val mapRenderer = map?.let { ReportMapRenderer(it) }
         try {
-            return writeInternal(summary, nowMs, track, photos, verification, out, meters, map, mapRenderer)
+            return writeInternal(summary, nowMs, track, photos, verification, out, meters, map, mapRenderer, extraStops)
         } finally {
             mapRenderer?.release()
         }
@@ -71,8 +72,10 @@ object PdfReport {
         out: OutputStream,
         meters: List<MeterPoint>,
         map: ReportMapSource?,
-        mapRenderer: ReportMapRenderer?
+        mapRenderer: ReportMapRenderer?,
+        extraStops: List<Stop>
     ): ReportMapOutcome {
+        val mapStops = summary.stops + extraStops
         val doc = PdfDocument()
         var pageNo = 1
         var page = doc.startPage(PdfDocument.PageInfo.Builder(PAGE_W, PAGE_H, pageNo).create())
@@ -122,6 +125,7 @@ object PdfReport {
         line(dateText, heading, 24f)
 
         for (l in SummaryText.statLines(summary)) line(l, body)
+        if (extraStops.isNotEmpty()) line("نقاط التوقف القصير المسجّلة اليوم: ${extraStops.size}", body)
         y += 6f
         line("حالة سلسلة البصمات: $verification", body)
         y += 10f
@@ -129,7 +133,7 @@ object PdfReport {
         // الخارطة العامة: فوق بلاطات القمر الصناعي المخزنة إن وُجدت، وإلا كما كانت (خلفية سادة)
         val mapW = (PAGE_W - 2 * MARGIN)
         val mapH = MAP_H.toFloat()
-        val plan = if (map != null) mapPlan(track, photos, summary.stops, meters) else null
+        val plan = if (map != null) mapPlan(track, photos, mapStops, meters) else null
         val overview = plan?.overview
         if (y + mapH > PAGE_H - 50f) newPage()
         var tileOutcome: ReportMapRenderer.Outcome? = null
@@ -143,7 +147,7 @@ object PdfReport {
                 tileOutcome = o
                 if (o.drawn > 0) {
                     MapRenderer(1.2f, compact = true).draw(
-                        canvas, mapW, mapH, track, photos, summary.stops, -1,
+                        canvas, mapW, mapH, track, photos, mapStops, -1,
                         mapRenderer.projector(overview), meters
                     )
                     mapRenderer.drawAttribution(canvas, overview)
@@ -154,7 +158,7 @@ object PdfReport {
             }
         }
         if (!drewTiles) {
-            MapRenderer(1.2f, compact = true).draw(canvas, mapW, mapH, track, photos, summary.stops, -1, null, meters)
+            MapRenderer(1.2f, compact = true).draw(canvas, mapW, mapH, track, photos, mapStops, -1, null, meters)
         }
         canvas.restore()
         y += mapH + 6f
@@ -194,7 +198,7 @@ object PdfReport {
                 try {
                     mapRenderer.drawBackground(canvas, dv)
                     MapRenderer(1.2f, compact = true).draw(
-                        canvas, mapW, dh, track, photos, summary.stops, -1,
+                        canvas, mapW, dh, track, photos, mapStops, -1,
                         mapRenderer.projector(dv), meters
                     )
                     mapRenderer.drawAttribution(canvas, dv)

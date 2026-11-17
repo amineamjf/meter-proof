@@ -170,4 +170,19 @@ class StopPointsTest {
         )
         assertEquals(mapOf("a" to 2, "b" to 1), StopPointLog.visitCounts(events))
     }
+
+    @Test fun pointsBecomeMapMarkersWithoutBeingLongStops() {
+        val events = listOf(
+            EventRec("STOP_START", 1_000L, 33.0, -7.0, "since=1000"),
+            EventRec("STOP_END", 61_000L, 33.0, -7.0, "start=1000;dur=60"),
+            EventRec(StopPointLog.EVENT_POINT, 70_000L, 33.1, -7.1, StopPointLog.pointDetail("a", 9f))
+        )
+        val pts = StopPointLog.asStops(events)
+        assertEquals(1, pts.size)
+        assertEquals(StopPointLog.POINT_KIND, pts[0].closedBy)
+        assertEquals(70_000L, pts[0].startMs)
+        // التوقفات الطويلة لا تتأثر بالنقاط، والخارطة ترى الاثنين
+        assertEquals(1, StopPairing.pair(events).size)
+        assertEquals(2, StopPointLog.mapStops(events).size)
+    }
 }

@@ -171,7 +171,11 @@ object StopPointLog {
     const val EVENT_REFINED = "STOP_POINT_REFINED"
     const val EVENT_VISIT = "STOP_POINT_VISIT"
 
-    class Known(val id: String, val lat: Double, val lon: Double, val accuracyM: Float, val samples: Int)
+    class Known(
+        val id: String, val lat: Double, val lon: Double, val accuracyM: Float, val samples: Int,
+        /** وقت أول تسجيل للنقطة (0 إن لم يُعرف). */
+        val t: Long = 0L
+    )
 
     fun pointDetail(id: String, acc: Float): String = "pt=$id;acc=${"%.0f".format(java.util.Locale.US, acc)}"
 
@@ -197,14 +201,23 @@ object StopPointLog {
             val id = m["pt"] ?: continue
             val acc = m["acc"]?.toFloatOrNull() ?: 0f
             when (e.type) {
-                EVENT_POINT -> out[id] = Known(id, lat, lon, acc, 1)
+                EVENT_POINT -> out[id] = Known(id, lat, lon, acc, 1, e.t)
                 EVENT_REFINED -> if (out.containsKey(id)) {
-                    out[id] = Known(id, lat, lon, acc, m["n"]?.toIntOrNull() ?: 1)
+                    out[id] = Known(id, lat, lon, acc, m["n"]?.toIntOrNull() ?: 1, out[id]?.t ?: e.t)
                 }
             }
         }
         return out.values.toList()
     }
+
+    /** نقاط التوقف القصير كنقاط للخارطة (closedBy = "point")، لا كتوقفات طويلة: لا تدخل إحصاءات اليوم. */
+    fun asStops(events: List<EventRec>): List<Stop> =
+        known(events).map { Stop(it.t, it.t, it.lat, it.lon, POINT_KIND) }
+
+    /** توقفات طويلة + نقاط توقف قصير، لعرض الخارطة والتصدير فقط. */
+    fun mapStops(events: List<EventRec>): List<Stop> = StopPairing.pair(events) + asStops(events)
+
+    const val POINT_KIND = "point"
 
     /** عدد مرات المرور بكل نقطة معروفة. */
     fun visitCounts(events: List<EventRec>): Map<String, Int> {

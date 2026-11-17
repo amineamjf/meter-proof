@@ -39,6 +39,7 @@ object MapHtml {
             if (s.lat == 0.0 && s.lon == 0.0) continue
             stopsJson.put(
                 JSONArray().put(s.lat).put(s.lon).put(s.startMs).put(s.endMs ?: 0L)
+                    .put(if (s.closedBy == StopPointLog.POINT_KIND) 1 else 0)
             )
         }
 
@@ -115,6 +116,12 @@ if (track.length) {
   bounds = bounds.concat(track);
 }
 stops.forEach(function (s) {
+  if (s[4] === 1) {
+    L.circleMarker([s[0], s[1]], {
+      radius: 5, color: '#ffffff', weight: 1.5, fillColor: '#00897b', fillOpacity: 0.95
+    }).addTo(map).bindPopup('<b>نقطة توقف قصير</b><br>' + new Date(s[2]).toLocaleTimeString('ar-MA'));
+    return;
+  }
   var m = L.circleMarker([s[0], s[1]], {
     radius: 9, color: '#e65100', fillColor: '#fb8c00', fillOpacity: 0.9
   }).addTo(map);

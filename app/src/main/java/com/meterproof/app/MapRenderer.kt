@@ -200,6 +200,15 @@ class MapRenderer(private val density: Float, private val compact: Boolean = fal
         for (s in validStops) {
             val x = px(s.lon)
             val y = py(s.lat)
+            if (s.closedBy == StopPointLog.POINT_KIND) {
+                // نقطة توقف قصير: دائرة زرقاء مخضرّة صغيرة بإطار أبيض (غير مربع التوقف الطويل)
+                dotPaint.color = Color.parseColor("#00897B")
+                val cr = dp(4.5f) * maxOf(mark, 0.5f)
+                canvas.drawCircle(x, y, cr, dotPaint)
+                canvas.drawCircle(x, y, cr, meterStroke)
+                dotPaint.color = Color.parseColor("#EF6C00")
+                continue
+            }
             val hs = dp(7f) * maxOf(mark, 0.4f)
             canvas.drawRect(x - hs, y - hs, x + hs, y + hs, dotPaint)
         }
